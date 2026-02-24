@@ -9,6 +9,7 @@ const TransactionsList: React.FC = () => {
   const transactions = useTransactionStore((s) => s.transactions);
   const fetchTransactions = useTransactionStore((s) => s.fetchTransactions);
   const addTransaction = useTransactionStore((s) => s.addTransaction);
+  const updateTransaction = useTransactionStore((s) => s.updateTransaction);
   const deleteTransaction = useTransactionStore((s) => s.deleteTransaction);
   
   const platforms = usePlatformStore((s) => s.platforms);
@@ -18,6 +19,18 @@ const TransactionsList: React.FC = () => {
   const fetchAssets = useAssetStore((s) => s.fetchAssets);
   
   const [form, setForm] = useState({
+    kind: 'BUY' as TransactionKind,
+    platformId: '',
+    assetId: '',
+    date: new Date().toISOString().split('T')[0],
+    qty: '',
+    price: '',
+    fee: '',
+    currency: 'EUR',
+    note: '',
+  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({
     kind: 'BUY' as TransactionKind,
     platformId: '',
     assetId: '',
@@ -108,6 +121,42 @@ const TransactionsList: React.FC = () => {
   }
 
   const showAssetFields = ['BUY', 'SELL'].includes(form.kind);
+  const showEditAssetFields = ['BUY', 'SELL'].includes(editForm.kind);
+
+  const beginEdit = (transaction: Transaction) => {
+    setEditingId(transaction.id);
+    setEditForm({
+      kind: transaction.kind,
+      platformId: transaction.platformId,
+      assetId: transaction.assetId ?? '',
+      date: new Date(transaction.date).toISOString().split('T')[0],
+      qty: transaction.qty?.toString() ?? '',
+      price: transaction.price?.toString() ?? '',
+      fee: transaction.fee?.toString() ?? '',
+      currency: transaction.currency,
+      note: transaction.note ?? '',
+    });
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingId) return;
+    if (!editForm.platformId) return;
+
+    const updates: Partial<Transaction> = {
+      kind: editForm.kind,
+      platformId: editForm.platformId,
+      assetId: editForm.assetId || undefined,
+      date: new Date(editForm.date).getTime(),
+      currency: editForm.currency,
+      note: editForm.note.trim() || undefined,
+      qty: editForm.qty ? parseFloat(editForm.qty) : undefined,
+      price: editForm.price ? parseFloat(editForm.price) : undefined,
+      fee: editForm.fee ? parseFloat(editForm.fee) : undefined,
+    };
+    await updateTransaction(editingId, updates);
+    setEditingId(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -258,6 +307,153 @@ const TransactionsList: React.FC = () => {
         </form>
       </div>
 
+      {editingId && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Modifier la transaction</h3>
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={editForm.kind}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, kind: e.target.value as TransactionKind })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option>BUY</option>
+                  <option>SELL</option>
+                  <option>DEPOSIT</option>
+                  <option>WITHDRAW</option>
+                  <option>FEE</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Platform</label>
+                <select
+                  value={editForm.platformId}
+                  onChange={(e) => setEditForm({ ...editForm, platformId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Select platform</option>
+                  {platforms.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={editForm.date}
+                  onChange={(e) => setEditForm({ ...editForm, date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+                <input
+                  type="text"
+                  value={editForm.currency}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, currency: e.target.value.toUpperCase() })
+                  }
+                  maxLength={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {showEditAssetFields && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Asset</label>
+                  <select
+                    value={editForm.assetId}
+                    onChange={(e) => setEditForm({ ...editForm, assetId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Select asset</option>
+                    {assets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.symbol} - {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={editForm.qty}
+                      onChange={(e) => setEditForm({ ...editForm, qty: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.price}
+                      onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fee</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editForm.fee}
+                  onChange={(e) => setEditForm({ ...editForm, fee: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+                <input
+                  type="text"
+                  value={editForm.note}
+                  onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+              >
+                Enregistrer
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingId(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Annuler
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* List */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
@@ -306,14 +502,20 @@ const TransactionsList: React.FC = () => {
                       <td className="px-4 py-3 text-right text-gray-900">
                         {t.fee ? t.fee.toFixed(2) : '—'}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => deleteTransaction(t.id)}
-                          className="text-red-600 hover:text-red-700 text-xs font-medium"
-                        >
-                          Delete
-                        </button>
-                      </td>
+                    <td className="px-4 py-3 text-right space-x-3">
+                      <button
+                        onClick={() => beginEdit(t)}
+                        className="text-blue-600 hover:text-blue-700 text-xs font-medium"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteTransaction(t.id)}
+                        className="text-red-600 hover:text-red-700 text-xs font-medium"
+                      >
+                        Delete
+                      </button>
+                    </td>
                     </tr>
                   );
                 })

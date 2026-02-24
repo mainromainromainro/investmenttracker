@@ -24,6 +24,8 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(record.assetType).toBe('ETF');
     expect(record.qty).toBe(10);
     expect(record.price).toBe(95.5);
+    expect(record.currency).toBe('EUR');
+    expect(record.cashCurrency).toBe('EUR');
     expect(record.note).toBe('Allocation long terme');
   });
 
@@ -62,6 +64,7 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.errors).toHaveLength(0);
     expect(result.records[0]?.kind).toBe('DEPOSIT');
     expect(result.records[0]?.assetSymbol).toBeUndefined();
+    expect(result.records[0]?.currency).toBe('EUR');
   });
 
   it('parses Trading212 normalized columns with aliases', () => {
@@ -70,7 +73,7 @@ describe('parseNormalizedTransactionsCsv', () => {
       '2025-01-03,VUSA,BUY,0.048592,108.246,Trading212,0.0',
     ]);
 
-    const result = parseNormalizedTransactionsCsv(csv);
+    const result = parseNormalizedTransactionsCsv(csv, { defaultCurrency: 'EUR' });
     expect(result.errors).toHaveLength(0);
     expect(result.records).toHaveLength(1);
     const record = result.records[0]!;
@@ -79,6 +82,7 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(record.qty).toBeCloseTo(0.048592);
     expect(record.price).toBeCloseTo(108.246);
     expect(record.currency).toBe('EUR');
+    expect(record.cashCurrency).toBe('EUR');
     expect(record.assetType).toBe('STOCK');
   });
 });

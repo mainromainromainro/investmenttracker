@@ -176,6 +176,8 @@ export const adminRepository = {
     const platformsCreated: Platform[] = [];
     const assetsCreated: Asset[] = [];
     const transactionsToCreate: Transaction[] = [];
+    const priceSnapshots: PriceSnapshot[] = [];
+    const priceKeySet = new Set<string>();
 
     await db.transaction('rw', ...withTables, async () => {
       const existingPlatforms = await db.platforms.toArray();
@@ -231,11 +233,26 @@ export const adminRepository = {
           qty: row.qty ?? undefined,
           price: row.price ?? undefined,
           fee: row.fee ?? undefined,
-          currency: row.currency,
+          currency: row.cashCurrency ?? row.currency,
           note: row.note ?? undefined,
           createdAt: timestamp + transactionsToCreate.length,
         };
         transactionsToCreate.push(transaction);
+
+        if (asset && row.price) {
+          const priceKey = `${asset.id}:${row.date}`;
+          if (!priceKeySet.has(priceKey)) {
+            priceSnapshots.push({
+              id: createId('price'),
+              assetId: asset.id,
+              date: row.date,
+              price: row.price,
+              currency: row.currency,
+              createdAt: timestamp + priceSnapshots.length,
+            });
+            priceKeySet.add(priceKey);
+          }
+        }
       }
 
       if (platformsCreated.length) {
@@ -246,6 +263,9 @@ export const adminRepository = {
       }
       if (transactionsToCreate.length) {
         await db.transactions.bulkAdd(transactionsToCreate);
+      }
+      if (priceSnapshots.length) {
+        await db.priceSnapshots.bulkAdd(priceSnapshots);
       }
     });
 

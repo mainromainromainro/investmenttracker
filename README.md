@@ -176,7 +176,7 @@ npm run test
 
 ### Importer des transactions via CSV
 
-Dans l’onglet **Settings**, la section *Import CSV normalisé* permet d’ingérer en bloc des plateformes, actifs et transactions. L’import accepte les colonnes canoniques suivantes (ordre libre) ainsi que leurs alias fréquents :
+Depuis le bouton **Import** de la barre de navigation (ou dans **Settings**), vous pouvez charger un CSV qui sera parsé, enrichi (prix, FX, plateformes/actifs manquants) puis injecté automatiquement. L’import accepte les colonnes canoniques suivantes (ordre libre) ainsi que leurs alias fréquents :
 
 | Colonne attendue | Alias acceptés | Obligatoire | Notes |
 | ---------------- | -------------- | ----------- | ----- |
@@ -188,7 +188,8 @@ Dans l’onglet **Settings**, la section *Import CSV normalisé* permet d’ing�
 | `asset_type`     |                | Requis pour BUY/SELL (défaut : `STOCK`) | Valeurs: `ETF`, `STOCK`, `CRYPTO` |
 | `qty`            | `Shares`, `Quantity` | Requis pour BUY/SELL | Doit être > 0 |
 | `price`          |                | Requis pour BUY/SELL | |
-| `currency`       | `Currency_Code` | Conseillé   | Code ISO (EUR, USD, …). Si absent → `EUR` |
+| `currency`       | `Currency_Code`, `Price_Currency` | Conseillé   | Devise de cotation. Si absente : tentative via ticker puis devise par défaut (sélecteur dans l’UI) |
+| `cash_currency`  | `Settlement_Currency` | Non | Devise de règlement (sinon `currency`) |
 | `fee`            | `Fees`, `Commission` | Non | Nombre positif |
 | `note`           |                | Non | Commentaire libre |
 
@@ -210,7 +211,7 @@ Exemple :
 2025-01-03,VUSA,BUY,0.048592,108.246,Trading212,0.0
 ```
 
-Après le chargement du fichier, l’application affiche les erreurs détectées (ligne + message) et le nombre de transactions prêtes à l’import avant d’écrire dans IndexedDB.
+Après le chargement du fichier, l’application affiche les erreurs détectées (ligne + message) et le nombre de transactions prêtes à l’import avant d’écrire dans IndexedDB. Pour les devises ≠ EUR, l’import tente automatiquement de récupérer un FX spot via exchangerate.host et de créer les snapshots associés ; sinon un message vous indique les devises à compléter manuellement.
 
 ### Testing with Sample Data
 

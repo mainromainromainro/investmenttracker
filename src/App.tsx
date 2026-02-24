@@ -7,6 +7,7 @@ import TransactionsList from './features/transactions/TransactionsList';
 import PricesList from './features/prices/PricesList';
 import FxList from './features/fx/FxList';
 import Settings from './features/settings/Settings';
+import ImportPage from './features/import/ImportPage';
 
 function App() {
   return (
@@ -39,6 +40,9 @@ function App() {
                 <Link to="/fx" className="text-gray-600 hover:text-gray-900">
                   FX
                 </Link>
+                <Link to="/import" className="text-gray-600 hover:text-gray-900">
+                  Import
+                </Link>
                 <Link to="/settings" className="text-gray-600 hover:text-gray-900">
                   Settings
                 </Link>
@@ -55,6 +59,7 @@ function App() {
             <Route path="/transactions" element={<TransactionsList />} />
             <Route path="/prices" element={<PricesList />} />
             <Route path="/fx" element={<FxList />} />
+            <Route path="/import" element={<ImportPage />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>

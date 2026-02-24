@@ -7,6 +7,7 @@ export type CsvHeader =
   | 'asset_name'
   | 'asset_type'
   | 'currency'
+  | 'cash_currency'
   | 'kind'
   | 'qty'
   | 'price'
@@ -22,7 +23,8 @@ export interface NormalizedTransactionRow {
   date: number;
   platform: string;
   kind: TransactionKind;
-  currency: string;
+  currency: string; // Asset / price currency
+  cashCurrency?: string; // Settlement currency if different
   assetSymbol?: string;
   assetName?: string;
   assetType?: AssetType;
@@ -89,6 +91,9 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   assetclass: 'asset_type',
   asset_class: 'asset_type',
   currency_code: 'currency',
+  price_currency: 'currency',
+  cash_currency: 'cash_currency',
+  settlement_currency: 'cash_currency',
 };
 
 const DEFAULT_CURRENCY = 'EUR';
@@ -209,12 +214,50 @@ const normalizeAssetName = (value: string | undefined): string | undefined => {
   return trimmed || undefined;
 };
 
-export const parseNormalizedTransactionsCsv = (csvText: string): CsvParseResult => {
+const SUFFIX_CURRENCY_MAP: Record<string, string> = {
+  '.L': 'GBP',
+  '.LN': 'GBP',
+  '.PA': 'EUR',
+  '.AS': 'EUR',
+  '.DE': 'EUR',
+  '.F': 'EUR',
+  '.SW': 'CHF',
+  '.HE': 'EUR',
+  '.TO': 'CAD',
+  '.V': 'CAD',
+  '.AX': 'AUD',
+  '.HK': 'HKD',
+  '.SI': 'SGD',
+  '.T': 'JPY',
+};
+
+const inferCurrencyFromSymbol = (symbol?: string): string | null => {
+  if (!symbol) return null;
+  const upper = symbol.toUpperCase();
+  const suffixEntry = Object.entries(SUFFIX_CURRENCY_MAP).find(([suffix]) =>
+    upper.endsWith(suffix),
+  );
+  if (suffixEntry) {
+    return suffixEntry[1];
+  }
+  if (upper.endsWith('-USD')) return 'USD';
+  if (upper.endsWith('-EUR')) return 'EUR';
+  if (upper.endsWith('-GBP')) return 'GBP';
+  if (upper.endsWith('-CAD')) return 'CAD';
+  if (upper.endsWith('-CHF')) return 'CHF';
+  return null;
+};
+
+export const parseNormalizedTransactionsCsv = (
+  csvText: string,
+  options?: { defaultCurrency?: string },
+): CsvParseResult => {
   const rows = parseCsv(csvText);
   const errors: CsvParseError[] = [];
   if (rows.length === 0) {
     return { records: [], errors: [{ row: 0, message: 'Le fichier est vide.' }] };
   }
+  const fallbackCurrency = options?.defaultCurrency ?? DEFAULT_CURRENCY;
 
   const rawHeaders = rows[0];
   const normalizedHeaders = rawHeaders.map((header) => normalizeHeader(header));
@@ -267,7 +310,20 @@ export const parseNormalizedTransactionsCsv = (csvText: string): CsvParseResult 
     if (cells.currency && !providedCurrency) {
       rowErrors.push(`Devise invalide: "${cells.currency}". Utilisez un code ISO (EUR, USD...).`);
     }
-    const currency = providedCurrency ?? DEFAULT_CURRENCY;
+
+    const inferredCurrency = providedCurrency ?? inferCurrencyFromSymbol(cells.asset_symbol);
+    const currency = inferredCurrency ?? fallbackCurrency;
+    if (!currency) {
+      rowErrors.push('Impossible de déterminer la devise de la ligne.');
+    }
+
+    const providedCashCurrency = cells.cash_currency
+      ? normalizeCurrency(cells.cash_currency)
+      : null;
+    if (cells.cash_currency && !providedCashCurrency) {
+      rowErrors.push(`Devise de règlement invalide: "${cells.cash_currency}".`);
+    }
+    const cashCurrency = providedCashCurrency ?? currency;
 
     const kindValue = cells.kind?.trim().toUpperCase();
     const kind = TRANSACTION_KINDS.find((value) => value === kindValue);
@@ -333,6 +389,7 @@ export const parseNormalizedTransactionsCsv = (csvText: string): CsvParseResult 
       platform: platform!,
       kind: kind!,
       currency: currency!,
+      cashCurrency,
       assetSymbol: assetSymbol,
       assetName: assetName || assetSymbol,
       assetType,
