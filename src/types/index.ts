@@ -77,8 +77,27 @@ export interface Position {
   valueEUR: number | null;
 }
 
+export interface TickerHolding {
+  assetId: string;
+  asset: Asset;
+  qty: number;
+  latestPrice: number | null;
+  latestPriceDate: number | null;
+  fxRate: number | null;
+  valueEUR: number | null;
+}
+
+export interface PortfolioHistoryPoint {
+  date: number;
+  totalValueEUR: number | null;
+  knownValueEUR: number;
+  hasMissingData: boolean;
+}
+
 export interface PortfolioSummary {
   positions: Position[];
+  byTicker: TickerHolding[];
+  history: PortfolioHistoryPoint[];
   totalValueEUR: number | null;
   byPlatform: Array<{
     platformId: string;

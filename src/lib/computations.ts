@@ -1,4 +1,14 @@
-import { Asset, Transaction, PriceSnapshot, FxSnapshot, Position, PortfolioSummary, Platform } from '../types';
+import {
+  Asset,
+  Transaction,
+  PriceSnapshot,
+  FxSnapshot,
+  Position,
+  PortfolioSummary,
+  Platform,
+  PortfolioHistoryPoint,
+  TickerHolding,
+} from '../types';
 
 /**
  * Compute position quantity for an asset on a platform
@@ -39,6 +49,19 @@ export const getLatestPrice = (
   return { price: latest.price, date: latest.date };
 };
 
+const getLatestPriceAtDate = (
+  prices: PriceSnapshot[],
+  assetId: string,
+  date: number
+): { price: number; date: number } | null => {
+  const candidates = prices.filter((p) => p.assetId === assetId && p.date <= date);
+  if (candidates.length === 0) return null;
+  const latest = candidates.reduce((max, current) =>
+    current.date > max.date ? current : max
+  );
+  return { price: latest.price, date: latest.date };
+};
+
 /**
  * Get latest FX rate for a currency to EUR
  * If currency is EUR, returns 1
@@ -57,6 +80,24 @@ export const getLatestFxRate = (
     current.date > max.date ? current : max
   );
   
+  return latest.rate;
+};
+
+const getLatestFxRateAtDate = (
+  fxSnapshots: FxSnapshot[],
+  currency: string,
+  date: number
+): number | null => {
+  if (currency === 'EUR') return 1;
+
+  const pair = `${currency}/EUR`;
+  const snapshots = fxSnapshots.filter((fx) => fx.pair === pair && fx.date <= date);
+  if (snapshots.length === 0) return null;
+
+  const latest = snapshots.reduce((max, current) =>
+    current.date > max.date ? current : max
+  );
+
   return latest.rate;
 };
 
@@ -83,6 +124,7 @@ export const computePortfolioSummary = (
   platforms: Platform[]
 ): PortfolioSummary => {
   const positions: Position[] = [];
+  const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   
   // Group transactions by asset+platform
   const assetPlatformMap = new Map<string, { assetId: string; platformId: string }>();
@@ -97,7 +139,7 @@ export const computePortfolioSummary = (
   
   // Compute position for each asset+platform combination
   for (const [, { assetId, platformId }] of assetPlatformMap) {
-    const asset = assets.find((a) => a.id === assetId);
+    const asset = assetMap.get(assetId);
     const platform = platforms.find((p) => p.id === platformId);
     
     if (!asset || !platform) continue;
@@ -164,14 +206,110 @@ export const computePortfolioSummary = (
     entry.valueEUR += position.valueEUR;
   }
   
+  // Aggregate by ticker across all platforms.
+  const byTickerMap = new Map<string, TickerHolding>();
+  for (const position of positions) {
+    const existing = byTickerMap.get(position.assetId);
+    if (!existing) {
+      byTickerMap.set(position.assetId, {
+        assetId: position.assetId,
+        asset: position.asset,
+        qty: position.qty,
+        latestPrice: position.latestPrice,
+        latestPriceDate: position.latestPriceDate,
+        fxRate: position.fxRate,
+        valueEUR: position.valueEUR,
+      });
+      continue;
+    }
+
+    existing.qty += position.qty;
+    if (existing.valueEUR === null || position.valueEUR === null) {
+      existing.valueEUR = null;
+    } else {
+      existing.valueEUR += position.valueEUR;
+    }
+  }
+
+  const byTicker = Array.from(byTickerMap.values())
+    .filter((holding) => Math.abs(holding.qty) > 1e-12)
+    .sort((a, b) => {
+      const valueA = a.valueEUR ?? -Infinity;
+      const valueB = b.valueEUR ?? -Infinity;
+      if (valueA === valueB) {
+        return a.asset.symbol.localeCompare(b.asset.symbol);
+      }
+      return valueB - valueA;
+    });
+
+  // Build portfolio evolution over time from transactional and market dates.
+  const datedTransactions = transactions
+    .filter((tx) => tx.assetId && (tx.kind === 'BUY' || tx.kind === 'SELL'))
+    .sort((a, b) => a.date - b.date);
+  const timelineSet = new Set<number>();
+  for (const tx of datedTransactions) timelineSet.add(tx.date);
+  for (const price of priceSnapshots) timelineSet.add(price.date);
+  for (const fx of fxSnapshots) timelineSet.add(fx.date);
+  const timelineDates = Array.from(timelineSet).sort((a, b) => a - b);
+
+  const history: PortfolioHistoryPoint[] = [];
+  const qtyByAsset = new Map<string, number>();
+  let txIndex = 0;
+
+  for (const date of timelineDates) {
+    while (txIndex < datedTransactions.length && datedTransactions[txIndex].date <= date) {
+      const tx = datedTransactions[txIndex];
+      const assetId = tx.assetId!;
+      const previousQty = qtyByAsset.get(assetId) ?? 0;
+      const delta =
+        tx.kind === 'BUY' ? (tx.qty ?? 0) :
+        tx.kind === 'SELL' ? -(tx.qty ?? 0) :
+        0;
+      qtyByAsset.set(assetId, previousQty + delta);
+      txIndex++;
+    }
+
+    let knownValueEUR = 0;
+    let hasMissingData = false;
+    let hasOpenPosition = false;
+
+    for (const [assetId, qty] of qtyByAsset) {
+      if (Math.abs(qty) <= 1e-12) continue;
+      hasOpenPosition = true;
+
+      const asset = assetMap.get(assetId);
+      if (!asset) continue;
+
+      const priceAtDate = getLatestPriceAtDate(priceSnapshots, assetId, date);
+      const fxRateAtDate = getLatestFxRateAtDate(fxSnapshots, asset.currency, date);
+      const valueEUR = computeValueEUR(qty, priceAtDate?.price ?? null, fxRateAtDate);
+
+      if (valueEUR === null) {
+        hasMissingData = true;
+      } else {
+        knownValueEUR += valueEUR;
+      }
+    }
+
+    if (!hasOpenPosition) continue;
+    history.push({
+      date,
+      totalValueEUR: hasMissingData ? null : knownValueEUR,
+      knownValueEUR,
+      hasMissingData,
+    });
+  }
+
   const totalValueEUR = positions.some((p) => p.valueEUR === null)
     ? null
     : positions.reduce((sum, p) => sum + (p.valueEUR ?? 0), 0);
   
   return {
+    positions,
+    byTicker,
+    history,
     totalValueEUR,
     byPlatform: Array.from(byPlatformMap.values()),
     byType: Array.from(byTypeMap.values()),
-    positions,
   };
 };

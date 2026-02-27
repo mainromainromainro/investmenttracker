@@ -271,6 +271,7 @@ describe('Investment computations', () => {
       );
 
       expect(summary.positions).toHaveLength(3);
+      expect(summary.byTicker).toHaveLength(3);
       expect(summary.totalValueEUR).not.toBeNull();
       expect(summary.totalValueEUR).toBeCloseTo(35109.6, 2);
       const platformTotals = Object.fromEntries(
@@ -283,6 +284,14 @@ describe('Investment computations', () => {
       expect(typeTotals.ETF).toBeCloseTo(9575, 2);
       expect(typeTotals.STOCK).toBeCloseTo(1614.6, 2);
       expect(typeTotals.CRYPTO).toBeCloseTo(23920, 2);
+
+      const tickerTotals = Object.fromEntries(
+        summary.byTicker.map((holding) => [holding.asset.symbol, holding.qty])
+      );
+      expect(tickerTotals.VWRL).toBeCloseTo(100, 4);
+      expect(tickerTotals.AAPL).toBeCloseTo(10, 4);
+      expect(tickerTotals.BTC).toBeCloseTo(0.5, 4);
+      expect(summary.history.length).toBeGreaterThan(0);
     });
 
     it('should compute EUR value for a manual single-asset entry', () => {
@@ -327,9 +336,81 @@ describe('Investment computations', () => {
       );
 
       expect(summary.positions).toHaveLength(1);
+      expect(summary.byTicker).toHaveLength(1);
+      expect(summary.byTicker[0]?.qty).toBeCloseTo(2, 4);
       const position = summary.positions[0];
       expect(position.valueEUR).toBeCloseTo(99, 2); // 2 * 55 * 0.9
       expect(summary.totalValueEUR).toBeCloseTo(99, 2);
+    });
+
+    it('should consolidate buy and sell movements to a single net ticker quantity', () => {
+      const timestamp = Date.now();
+      const platforms: Platform[] = [{ id: 'p1', name: 'Broker', createdAt: timestamp }];
+      const assets: Asset[] = [
+        {
+          id: 'a1',
+          type: 'STOCK',
+          symbol: 'TSLA',
+          name: 'Tesla',
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+      ];
+      const transactions: Transaction[] = [
+        {
+          id: 't1',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: timestamp - 2000,
+          qty: 10,
+          price: 150,
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+        {
+          id: 't2',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'SELL',
+          date: timestamp - 1000,
+          qty: 4,
+          price: 200,
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+      ];
+      const prices: PriceSnapshot[] = [
+        {
+          id: 'ps1',
+          assetId: 'a1',
+          date: timestamp,
+          price: 210,
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+      ];
+      const fxSnapshots: FxSnapshot[] = [
+        {
+          id: 'fx1',
+          pair: 'USD/EUR',
+          date: timestamp,
+          rate: 0.9,
+          createdAt: timestamp,
+        },
+      ];
+
+      const summary = computePortfolioSummary(
+        assets,
+        transactions,
+        prices,
+        fxSnapshots,
+        platforms
+      );
+
+      expect(summary.byTicker).toHaveLength(1);
+      expect(summary.byTicker[0]?.qty).toBeCloseTo(6, 4);
+      expect(summary.byTicker[0]?.valueEUR).toBeCloseTo(1134, 2); // 6 * 210 * 0.9
     });
   });
 });
