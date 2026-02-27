@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom';
 import './App.css';
 import Dashboard from './features/dashboard/Dashboard';
 import AssetsList from './features/assets/AssetsList';
@@ -9,49 +9,61 @@ import FxList from './features/fx/FxList';
 import Settings from './features/settings/Settings';
 import ImportPage from './features/import/ImportPage';
 
+const navItems = [
+  { to: '/', label: 'Dashboard' },
+  { to: '/assets', label: 'Assets' },
+  { to: '/platforms', label: 'Platforms' },
+  { to: '/transactions', label: 'Transactions' },
+  { to: '/prices', label: 'Prices' },
+  { to: '/fx', label: 'FX' },
+  { to: '/settings', label: 'Settings' },
+];
+
 function App() {
   return (
-    <BrowserRouter>
-      <div className="min-h-screen bg-gray-50">
-        <nav className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-16">
-              <div className="flex items-center">
-                <h1 className="text-2xl font-bold text-gray-900">
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+        <div className="pointer-events-none absolute -left-24 top-[-120px] h-72 w-72 rounded-full bg-cyan-400/25 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-120px] top-48 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-[-80px] left-1/3 h-72 w-72 rounded-full bg-fuchsia-500/15 blur-3xl" />
+
+        <header className="sticky top-0 z-20 px-4 pb-3 pt-4 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-7xl glass-nav animate-fade-up">
+            <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center justify-between gap-4">
+                <Link to="/" className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
                   Investment Tracker
-                </h1>
+                </Link>
+                <NavLink
+                  to="/import"
+                  className="inline-flex items-center rounded-lg bg-cyan-400/90 px-3 py-1.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+                >
+                  Import CSV
+                </NavLink>
               </div>
-              <div className="flex items-center space-x-4">
-                <Link to="/" className="text-gray-600 hover:text-gray-900">
-                  Dashboard
-                </Link>
-                <Link to="/assets" className="text-gray-600 hover:text-gray-900">
-                  Assets
-                </Link>
-                <Link to="/platforms" className="text-gray-600 hover:text-gray-900">
-                  Platforms
-                </Link>
-                <Link to="/transactions" className="text-gray-600 hover:text-gray-900">
-                  Transactions
-                </Link>
-                <Link to="/prices" className="text-gray-600 hover:text-gray-900">
-                  Prices
-                </Link>
-                <Link to="/fx" className="text-gray-600 hover:text-gray-900">
-                  FX
-                </Link>
-                <Link to="/import" className="text-gray-600 hover:text-gray-900">
-                  Import
-                </Link>
-                <Link to="/settings" className="text-gray-600 hover:text-gray-900">
-                  Settings
-                </Link>
-              </div>
+              <nav className="flex flex-wrap items-center gap-2">
+                {navItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      `rounded-md px-3 py-1.5 text-sm transition ${
+                        isActive
+                          ? 'bg-white/20 text-white shadow-sm'
+                          : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`
+                    }
+                    end={item.to === '/'}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
             </div>
           </div>
-        </nav>
+        </header>
 
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <main className="relative z-10 mx-auto max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/assets" element={<AssetsList />} />
