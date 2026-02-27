@@ -7,17 +7,44 @@ import { usePriceStore } from '../../stores/priceStore';
 import { useFxStore } from '../../stores/fxStore';
 import { computePortfolioSummary } from '../../lib/computations';
 import { PortfolioHistoryPoint } from '../../types';
+import { fetchFxRatesToEur, fetchLiveQuotes } from '../../lib/liveMarketData';
 
-const formatEUR = (value: number) => `€${value.toFixed(2)}`;
+const formatEUR = (value: number) =>
+  new Intl.NumberFormat('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+
+const StatCard: React.FC<{ label: string; value: string; tone?: 'neutral' | 'positive' | 'warn' }> = ({
+  label,
+  value,
+  tone = 'neutral',
+}) => {
+  const toneClass =
+    tone === 'positive'
+      ? 'text-emerald-300'
+      : tone === 'warn'
+        ? 'text-amber-300'
+        : 'text-cyan-200';
+
+  return (
+    <div className="glass-card animate-fade-up rounded-xl p-4">
+      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-2 text-xl font-semibold ${toneClass}`}>{value}</p>
+    </div>
+  );
+};
 
 const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = ({ history }) => {
   const points = history.filter((entry) => entry.totalValueEUR !== null);
 
   if (points.length < 2) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">Portfolio Evolution</h3>
-        <p className="mt-2 text-sm text-slate-600">
+      <div className="glass-card animate-fade-up animate-delay-1 rounded-2xl p-6">
+        <h3 className="text-lg font-semibold text-white">Portfolio Evolution</h3>
+        <p className="mt-2 text-sm text-slate-300">
           Add more dated prices/transactions to visualize portfolio evolution over time.
         </p>
       </div>
@@ -38,10 +65,13 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
     if (points.length <= 1) return padding;
     return padding + (index / (points.length - 1)) * usableWidth;
   };
+
   const toY = (value: number) =>
     height - padding - ((value - minValue) / range) * usableHeight;
 
-  const linePoints = points.map((entry, index) => `${toX(index)},${toY(entry.totalValueEUR as number)}`);
+  const linePoints = points.map(
+    (entry, index) => `${toX(index)},${toY(entry.totalValueEUR as number)}`,
+  );
   const linePath = `M ${linePoints.join(' L ')}`;
   const areaPath = `${linePath} L ${toX(points.length - 1)},${height - padding} L ${padding},${height - padding} Z`;
 
@@ -54,7 +84,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
       : (growth / (firstPoint.totalValueEUR as number)) * 100;
 
   return (
-    <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-900 p-6 shadow-lg">
+    <div className="animate-fade-up animate-delay-1 rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-cyan-950 p-6 shadow-2xl shadow-cyan-900/25">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h3 className="text-xl font-semibold text-white">Portfolio Evolution</h3>
@@ -107,6 +137,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
             strokeWidth="4"
             strokeLinecap="round"
             strokeLinejoin="round"
+            className="line-draw"
           />
 
           {linePoints.map((point, index) => {
@@ -125,23 +156,71 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
   );
 };
 
+const HoldingsBars: React.FC<{
+  holdings: ReturnType<typeof computePortfolioSummary>['byTicker'];
+}> = ({ holdings }) => {
+  const visible = holdings.filter((holding) => holding.valueEUR !== null).slice(0, 6);
+  if (!visible.length) {
+    return (
+      <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white">Top Holdings</h3>
+        <p className="mt-2 text-sm text-slate-300">Live valuation will appear here once prices and FX are available.</p>
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(...visible.map((holding) => holding.valueEUR as number));
+
+  return (
+    <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white">Top Holdings</h3>
+      <div className="mt-4 space-y-3">
+        {visible.map((holding) => {
+          const value = holding.valueEUR as number;
+          const width = maxValue > 0 ? Math.max(8, (value / maxValue) * 100) : 8;
+          return (
+            <div key={holding.assetId}>
+              <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
+                <span>{holding.asset.symbol}</span>
+                <span>{formatEUR(value)}</span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-800/80">
+                <div
+                  className="h-2 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-700"
+                  style={{ width: `${width}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const Dashboard: React.FC = () => {
   const platforms = usePlatformStore((s) => s.platforms);
   const fetchPlatforms = usePlatformStore((s) => s.fetchPlatforms);
 
   const assets = useAssetStore((s) => s.assets);
   const fetchAssets = useAssetStore((s) => s.fetchAssets);
+  const updateAsset = useAssetStore((s) => s.updateAsset);
 
   const transactions = useTransactionStore((s) => s.transactions);
   const fetchTransactions = useTransactionStore((s) => s.fetchTransactions);
 
   const prices = usePriceStore((s) => s.prices);
   const fetchPrices = usePriceStore((s) => s.fetchPrices);
+  const addPrice = usePriceStore((s) => s.addPrice);
 
   const fxSnapshots = useFxStore((s) => s.fxSnapshots);
   const fetchFxSnapshots = useFxStore((s) => s.fetchFxSnapshots);
+  const addFxSnapshot = useFxStore((s) => s.addFxSnapshot);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -183,63 +262,156 @@ const Dashboard: React.FC = () => {
 
   const summary = useMemo(
     () => computePortfolioSummary(assets, transactions, prices, fxSnapshots, platforms),
-    [assets, transactions, prices, fxSnapshots, platforms]
+    [assets, transactions, prices, fxSnapshots, platforms],
   );
 
+  const missingTickerCount = summary.byTicker.filter((holding) => holding.valueEUR === null).length;
+
+  const handleSyncLiveData = async () => {
+    if (!assets.length || syncing) {
+      return;
+    }
+
+    setSyncing(true);
+    setSyncMessage(null);
+
+    try {
+      const quoteResult = await fetchLiveQuotes(assets);
+      const now = Date.now();
+
+      for (let i = 0; i < quoteResult.quotes.length; i += 1) {
+        const quote = quoteResult.quotes[i];
+        const relatedAsset = assets.find((asset) => asset.id === quote.assetId);
+        if (relatedAsset && relatedAsset.currency !== quote.currency) {
+          await updateAsset(relatedAsset.id, { currency: quote.currency });
+        }
+        await addPrice({
+          id: `price_live_${quote.assetId}_${quote.date}_${i}_${now}`,
+          assetId: quote.assetId,
+          date: quote.date,
+          price: quote.price,
+          currency: quote.currency,
+        });
+      }
+
+      const allCurrencies = Array.from(
+        new Set([
+          ...assets.map((asset) => asset.currency),
+          ...quoteResult.quotes.map((quote) => quote.currency),
+        ]),
+      );
+      const fxResult = await fetchFxRatesToEur(allCurrencies);
+
+      const fxEntries = Object.entries(fxResult.rates);
+      for (let i = 0; i < fxEntries.length; i += 1) {
+        const [currency, rate] = fxEntries[i];
+        await addFxSnapshot({
+          id: `fx_live_${currency}_${now}_${i}`,
+          pair: `${currency}/EUR`,
+          date: now,
+          rate,
+        });
+      }
+
+      await Promise.all([fetchPrices(), fetchFxSnapshots(), fetchAssets()]);
+
+      const messageParts = [
+        `${quoteResult.quotes.length}/${assets.length} live prices synced`,
+        `${fxEntries.length} FX rates synced`,
+      ];
+      if (quoteResult.errors.length) {
+        messageParts.push(`${quoteResult.errors.length} tickers unresolved`);
+      }
+      if (fxResult.errors.length) {
+        messageParts.push(`${fxResult.errors.length} FX pairs unresolved`);
+      }
+      setSyncMessage(`${messageParts.join(' | ')}.`);
+    } catch (syncError) {
+      const message = syncError instanceof Error ? syncError.message : 'Live sync failed.';
+      setSyncMessage(`Live sync failed: ${message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (loading) {
-    return <div className="text-center py-6">Loading...</div>;
+    return <div className="py-6 text-center text-slate-300">Loading...</div>;
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeading title="Dashboard" subtitle="Portfolio overview in EUR" />
+    <div className="space-y-6 pb-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <PageHeading title="Dashboard" subtitle="Portfolio overview in EUR with live market sync" />
+        <button
+          type="button"
+          onClick={handleSyncLiveData}
+          disabled={syncing || assets.length === 0}
+          className="h-fit rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {syncing ? 'Syncing live data...' : 'Sync live prices & FX'}
+        </button>
+      </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-md border border-rose-300/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
           {error}
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="text-center">
-          <p className="text-gray-600 text-sm font-medium">Total Portfolio Value</p>
-          <p className="text-5xl font-bold text-gray-900 mt-2">
-            {summary.totalValueEUR !== null ? formatEUR(summary.totalValueEUR) : 'Missing price/FX'}
-          </p>
+      {syncMessage && (
+        <div className="rounded-md border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+          {syncMessage}
         </div>
+      )}
+
+      <div className="glass-card animate-fade-up rounded-2xl p-6 text-center">
+        <p className="text-sm font-medium text-slate-300">Total Portfolio Value</p>
+        <p className="mt-2 text-4xl font-bold text-white sm:text-5xl">
+          {summary.totalValueEUR !== null ? formatEUR(summary.totalValueEUR) : 'Missing price/FX'}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <StatCard label="Open positions" value={String(summary.positions.filter((p) => Math.abs(p.qty) > 1e-12).length)} />
+        <StatCard label="Tickers covered" value={`${summary.byTicker.length}`} tone="positive" />
+        <StatCard
+          label="Missing market data"
+          value={`${missingTickerCount} ticker${missingTickerCount > 1 ? 's' : ''}`}
+          tone={missingTickerCount > 0 ? 'warn' : 'positive'}
+        />
       </div>
 
       <PortfolioEvolutionChart history={summary.history} />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">By Platform</h3>
-          <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <HoldingsBars holdings={summary.byTicker} />
+
+        <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white">By Platform</h3>
+          <div className="mt-4 space-y-3">
             {summary.byPlatform.length === 0 ? (
-              <p className="text-gray-500 text-sm">No platforms</p>
+              <p className="text-sm text-slate-300">No platforms</p>
             ) : (
               summary.byPlatform.map((entry) => (
-                <div key={entry.platformId} className="flex justify-between">
-                  <span className="text-gray-700">{entry.name}</span>
-                  <span className="font-semibold text-gray-900">
+                <div key={entry.platformId} className="flex justify-between text-sm">
+                  <span className="text-slate-200">{entry.name}</span>
+                  <span className="font-semibold text-white">
                     {entry.valueEUR !== null ? formatEUR(entry.valueEUR) : 'Missing FX'}
                   </span>
                 </div>
               ))
             )}
           </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">By Asset Type</h3>
-          <div className="space-y-3">
+          <h3 className="mt-8 text-lg font-semibold text-white">By Asset Type</h3>
+          <div className="mt-4 space-y-3">
             {summary.byType.length === 0 ? (
-              <p className="text-gray-500 text-sm">No assets</p>
+              <p className="text-sm text-slate-300">No assets</p>
             ) : (
               summary.byType.map((entry) => (
-                <div key={entry.type} className="flex justify-between">
-                  <span className="text-gray-700">{entry.type}</span>
-                  <span className="font-semibold text-gray-900">
+                <div key={entry.type} className="flex justify-between text-sm">
+                  <span className="text-slate-200">{entry.type}</span>
+                  <span className="font-semibold text-white">
                     {entry.valueEUR !== null ? formatEUR(entry.valueEUR) : 'Missing FX'}
                   </span>
                 </div>
@@ -249,47 +421,47 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">Net Holdings by Ticker</h3>
-          <p className="text-xs text-gray-500 mt-1">
+      <div className="glass-card animate-fade-up animate-delay-3 overflow-hidden rounded-xl">
+        <div className="border-b border-slate-700/60 px-6 py-4">
+          <h3 className="text-lg font-semibold text-white">Net Holdings by Ticker</h3>
+          <p className="mt-1 text-xs text-slate-300">
             One consolidated line per ticker (BUY minus SELL across all platforms)
           </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-900/60 text-slate-200">
               <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Ticker</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Asset</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Net Qty</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Price</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">FX</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Value EUR</th>
+                <th className="px-6 py-3 text-left font-semibold">Ticker</th>
+                <th className="px-6 py-3 text-left font-semibold">Asset</th>
+                <th className="px-6 py-3 text-right font-semibold">Net Qty</th>
+                <th className="px-6 py-3 text-right font-semibold">Price</th>
+                <th className="px-6 py-3 text-right font-semibold">FX</th>
+                <th className="px-6 py-3 text-right font-semibold">Value EUR</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-slate-800/70">
               {summary.byTicker.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-4 text-center text-slate-400">
                     No holdings yet
                   </td>
                 </tr>
               ) : (
                 summary.byTicker.map((holding) => (
-                  <tr key={holding.assetId} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm font-semibold text-gray-900">{holding.asset.symbol}</td>
-                    <td className="px-6 py-4 text-sm text-gray-700">{holding.asset.name}</td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">{holding.qty.toFixed(4)}</td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">
+                  <tr key={holding.assetId} className="transition hover:bg-slate-900/50">
+                    <td className="px-6 py-4 font-semibold text-white">{holding.asset.symbol}</td>
+                    <td className="px-6 py-4 text-slate-200">{holding.asset.name}</td>
+                    <td className="px-6 py-4 text-right text-slate-100">{holding.qty.toFixed(4)}</td>
+                    <td className="px-6 py-4 text-right text-slate-100">
                       {holding.latestPrice !== null
                         ? `${holding.asset.currency} ${holding.latestPrice.toFixed(2)}`
                         : 'Missing price'}
                     </td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 text-right text-slate-100">
                       {holding.fxRate !== null ? holding.fxRate.toFixed(4) : 'Missing FX'}
                     </td>
-                    <td className="px-6 py-4 text-sm text-right font-semibold text-gray-900">
+                    <td className="px-6 py-4 text-right font-semibold text-white">
                       {holding.valueEUR !== null ? formatEUR(holding.valueEUR) : 'Missing data'}
                     </td>
                   </tr>
@@ -300,49 +472,49 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">All Positions by Platform</h3>
+      <div className="glass-card animate-fade-up animate-delay-3 overflow-hidden rounded-xl">
+        <div className="border-b border-slate-700/60 px-6 py-4">
+          <h3 className="text-lg font-semibold text-white">All Positions by Platform</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-900/60 text-slate-200">
               <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Asset</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Platform</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">Type</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Qty</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Price</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">FX Rate</th>
-                <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">Value EUR</th>
+                <th className="px-6 py-3 text-left font-semibold">Asset</th>
+                <th className="px-6 py-3 text-left font-semibold">Platform</th>
+                <th className="px-6 py-3 text-left font-semibold">Type</th>
+                <th className="px-6 py-3 text-right font-semibold">Qty</th>
+                <th className="px-6 py-3 text-right font-semibold">Price</th>
+                <th className="px-6 py-3 text-right font-semibold">FX Rate</th>
+                <th className="px-6 py-3 text-right font-semibold">Value EUR</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-slate-800/70">
               {summary.positions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan={7} className="px-6 py-4 text-center text-slate-400">
                     No positions yet
                   </td>
                 </tr>
               ) : (
                 summary.positions.map((position) => (
-                  <tr key={`${position.assetId}:${position.platformId}`} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                  <tr key={`${position.assetId}:${position.platformId}`} className="transition hover:bg-slate-900/50">
+                    <td className="px-6 py-4 text-slate-100">
                       <div>{position.asset.name}</div>
-                      <div className="text-gray-500 text-xs">{position.asset.symbol}</div>
+                      <div className="text-xs text-slate-400">{position.asset.symbol}</div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-700">{position.platform.name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-700">{position.asset.type}</td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">{position.qty.toFixed(4)}</td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 text-slate-200">{position.platform.name}</td>
+                    <td className="px-6 py-4 text-slate-200">{position.asset.type}</td>
+                    <td className="px-6 py-4 text-right text-slate-100">{position.qty.toFixed(4)}</td>
+                    <td className="px-6 py-4 text-right text-slate-100">
                       {position.latestPrice !== null
                         ? `${position.asset.currency} ${position.latestPrice.toFixed(2)}`
                         : 'Missing price'}
                     </td>
-                    <td className="px-6 py-4 text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 text-right text-slate-100">
                       {position.fxRate !== null ? position.fxRate.toFixed(4) : 'Missing FX'}
                     </td>
-                    <td className="px-6 py-4 text-sm text-right font-semibold text-gray-900">
+                    <td className="px-6 py-4 text-right font-semibold text-white">
                       {position.valueEUR !== null ? formatEUR(position.valueEUR) : 'Missing data'}
                     </td>
                   </tr>

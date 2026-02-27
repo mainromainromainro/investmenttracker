@@ -23,7 +23,8 @@ const createId = (prefix: string) => {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 };
 
-const normalizeKey = (value: string) => value.trim().toLowerCase();
+const normalizeKey = (value: string | undefined | null) =>
+  String(value ?? '').trim().toLowerCase();
 
 export const adminRepository = {
   /**

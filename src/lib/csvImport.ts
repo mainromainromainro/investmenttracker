@@ -99,11 +99,11 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
 const DEFAULT_CURRENCY = 'EUR';
 const DEFAULT_ASSET_TYPE: AssetType = 'STOCK';
 
-const normalizeHeader = (header: string): CsvHeader | string =>
-  header.trim().toLowerCase().replace(/[\s-]+/g, '_');
+const normalizeHeader = (header: string | undefined): CsvHeader | string =>
+  (header ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 
 const isRowEmpty = (row: string[]): boolean =>
-  row.every((value) => value.trim() === '');
+  row.every((value) => (value ?? '').trim() === '');
 
 const detectDelimiter = (text: string): ',' | ';' => {
   const firstLine = text.split(/\r?\n/)[0] ?? '';
@@ -167,15 +167,15 @@ const parseCsv = (text: string): string[][] => {
 
 const parseFloatSafe = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const trimmed = value.trim();
+  const trimmed = String(value).trim();
   if (!trimmed) return null;
   const normalized = trimmed.replace(/\s/g, '');
   const parsed = Number(normalized);
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const parseDate = (value: string): number | null => {
-  const trimmed = value.trim();
+const parseDate = (value: string | undefined): number | null => {
+  const trimmed = String(value ?? '').trim();
   if (!trimmed) return null;
   const timestamp = Number(trimmed);
   if (!Number.isNaN(timestamp) && trimmed.length >= 12) {
@@ -185,14 +185,14 @@ const parseDate = (value: string): number | null => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-const normalizeCurrency = (value: string): string | null => {
-  const trimmed = value.trim().toUpperCase();
+const normalizeCurrency = (value: string | undefined): string | null => {
+  const trimmed = String(value ?? '').trim().toUpperCase();
   if (trimmed.length !== 3) return null;
   return trimmed;
 };
 
-const normalizePlatform = (value: string): string | null => {
-  const trimmed = value.trim();
+const normalizePlatform = (value: string | undefined): string | null => {
+  const trimmed = String(value ?? '').trim();
   return trimmed || null;
 };
 

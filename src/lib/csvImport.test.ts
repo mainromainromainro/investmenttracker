@@ -85,4 +85,16 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(record.cashCurrency).toBe('EUR');
     expect(record.assetType).toBe('STOCK');
   });
+
+  it('does not crash when a row has missing trailing cells', () => {
+    const csv = buildCsv([
+      'date,platform,kind,asset_symbol,qty,price',
+      '2025-01-03,Trading212,BUY,VUSA,0.048592',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, { defaultCurrency: 'EUR' });
+    expect(result.records).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toContain('price doit');
+  });
 });

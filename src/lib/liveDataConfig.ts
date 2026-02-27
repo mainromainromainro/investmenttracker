@@ -8,7 +8,8 @@ export const getLiveDataApiKey = (): string => {
       return stored;
     }
   }
-  const envValue = import.meta.env.VITE_TWELVE_DATA_API_KEY;
+  const viteEnv = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  const envValue = viteEnv?.VITE_TWELVE_DATA_API_KEY;
   if (typeof envValue === 'string' && envValue.trim()) {
     return envValue.trim();
   }
@@ -29,4 +30,3 @@ export const hasCustomLiveDataApiKey = (): boolean => {
   const key = getLiveDataApiKey();
   return key !== FALLBACK_API_KEY;
 };
-

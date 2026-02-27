@@ -7,10 +7,17 @@ import { usePriceStore } from '../../stores/priceStore';
 import { useFxStore } from '../../stores/fxStore';
 import { adminRepository } from '../../repositories/adminRepository';
 import CsvImportSection from '../import/CsvImportSection';
+import {
+  getLiveDataApiKey,
+  hasCustomLiveDataApiKey,
+  saveLiveDataApiKey,
+} from '../../lib/liveDataConfig';
 
 const Settings: React.FC = () => {
   const [resetting, setResetting] = useState(false);
   const [seedingData, setSeedingData] = useState(false);
+  const [liveDataApiKey, setLiveDataApiKey] = useState(() => getLiveDataApiKey());
+  const [liveDataMessage, setLiveDataMessage] = useState<string | null>(null);
 
   const fetchAll = async () => {
     await Promise.all([
@@ -58,12 +65,64 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleSaveLiveDataKey = () => {
+    saveLiveDataApiKey(liveDataApiKey);
+    const hasCustomKey = hasCustomLiveDataApiKey();
+    setLiveDataMessage(
+      hasCustomKey
+        ? 'Live market API key saved. Live sync can now resolve all tickers supported by Twelve Data.'
+        : 'No custom key saved. The app will use the public demo key (very limited coverage).',
+    );
+  };
+
+  const handleClearLiveDataKey = () => {
+    setLiveDataApiKey('');
+    saveLiveDataApiKey('');
+    setLiveDataMessage(
+      'Custom key removed. The app will use the demo key until you configure a personal one.',
+    );
+  };
+
   return (
     <div className="space-y-6">
       <PageHeading title="Settings" subtitle="Manage your database" />
 
       {/* CSV Import */}
       <CsvImportSection />
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Live Data API Key</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Used for live prices by ticker (provider: Twelve Data). Add your free key to unlock
+          broader symbol coverage.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="password"
+            value={liveDataApiKey}
+            onChange={(e) => setLiveDataApiKey(e.target.value)}
+            placeholder="Enter Twelve Data API key"
+            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-gray-900"
+          />
+          <button
+            onClick={handleSaveLiveDataKey}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+          >
+            Save Key
+          </button>
+          <button
+            onClick={handleClearLiveDataKey}
+            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition"
+          >
+            Clear
+          </button>
+        </div>
+        {liveDataMessage && (
+          <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+            {liveDataMessage}
+          </p>
+        )}
+      </div>
 
       {/* Seed Data */}
       <div className="bg-white rounded-lg shadow p-6">

@@ -20,7 +20,7 @@ const fetchFxRate = async (currency: string): Promise<number | null> => {
   if (currency === BASE_CURRENCY) return 1;
   try {
     const response = await fetch(
-      `https://api.exchangerate.host/latest?base=${currency}&symbols=${BASE_CURRENCY}`,
+      `https://api.frankfurter.app/latest?from=${currency}&to=${BASE_CURRENCY}`,
     );
     if (!response.ok) {
       return null;
