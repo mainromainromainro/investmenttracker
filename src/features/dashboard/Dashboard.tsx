@@ -31,7 +31,7 @@ const StatCard: React.FC<{ label: string; value: string; tone?: 'neutral' | 'pos
 
   return (
     <div className="glass-card animate-fade-up rounded-xl p-4">
-      <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="text-xs uppercase tracking-wide text-stone-300">{label}</p>
       <p className={`mt-2 text-xl font-semibold ${toneClass}`}>{value}</p>
     </div>
   );
@@ -44,7 +44,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
     return (
       <div className="glass-card animate-fade-up animate-delay-1 rounded-2xl p-6">
         <h3 className="text-lg font-semibold text-white">Portfolio Evolution</h3>
-        <p className="mt-2 text-sm text-slate-300">
+        <p className="mt-2 text-sm text-stone-300">
           Add more dated prices/transactions to visualize portfolio evolution over time.
         </p>
       </div>
@@ -164,7 +164,7 @@ const HoldingsBars: React.FC<{
     return (
       <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
         <h3 className="text-lg font-semibold text-white">Top Holdings</h3>
-        <p className="mt-2 text-sm text-slate-300">Live valuation will appear here once prices and FX are available.</p>
+        <p className="mt-2 text-sm text-stone-300">Live valuation will appear here once prices and FX are available.</p>
       </div>
     );
   }
@@ -180,16 +180,186 @@ const HoldingsBars: React.FC<{
           const width = maxValue > 0 ? Math.max(8, (value / maxValue) * 100) : 8;
           return (
             <div key={holding.assetId}>
-              <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
+              <div className="mb-1 flex items-center justify-between text-xs text-stone-300">
                 <span>{holding.asset.symbol}</span>
                 <span>{formatEUR(value)}</span>
               </div>
-              <div className="h-2 rounded-full bg-slate-800/80">
+              <div className="h-2 rounded-full bg-emerald-950/70">
                 <div
                   className="h-2 rounded-full bg-gradient-to-r from-stone-200 to-emerald-300 transition-all duration-700"
                   style={{ width: `${width}%` }}
                 />
               </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const ALLOCATION_COLORS = [
+  '#f5f5f0',
+  '#86efac',
+  '#a7f3d0',
+  '#99f6e4',
+  '#bef264',
+  '#fde68a',
+  '#fca5a5',
+];
+
+const AllocationDonut: React.FC<{
+  holdings: ReturnType<typeof computePortfolioSummary>['byTicker'];
+}> = ({ holdings }) => {
+  const visible = holdings
+    .filter((holding) => holding.valueEUR !== null && (holding.valueEUR as number) > 0)
+    .sort((a, b) => (b.valueEUR as number) - (a.valueEUR as number));
+
+  if (!visible.length) {
+    return (
+      <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white">Allocation Breakdown</h3>
+        <p className="mt-2 text-sm text-stone-300">No valued holdings yet.</p>
+      </div>
+    );
+  }
+
+  const totalValue = visible.reduce((sum, item) => sum + (item.valueEUR as number), 0);
+  const top = visible.slice(0, 6);
+  const topTotal = top.reduce((sum, item) => sum + (item.valueEUR as number), 0);
+  const otherValue = Math.max(0, totalValue - topTotal);
+  const segments: Array<{ id: string; label: string; value: number }> = [
+    ...top.map((entry) => ({
+      id: entry.assetId,
+      label: entry.asset.symbol,
+      value: entry.valueEUR as number,
+    })),
+  ];
+  if (otherValue > 0) {
+    segments.push({
+      id: 'other',
+      label: 'OTHER',
+      value: otherValue,
+    });
+  }
+
+  let cursor = 0;
+  const gradients = segments.map((segment, index) => {
+    const size = totalValue <= 0 ? 0 : (segment.value / totalValue) * 360;
+    const start = cursor;
+    const end = cursor + size;
+    cursor = end;
+    const color = ALLOCATION_COLORS[index % ALLOCATION_COLORS.length];
+    return `${color} ${start}deg ${end}deg`;
+  });
+
+  return (
+    <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white">Allocation Breakdown</h3>
+      <div className="mt-4 flex flex-col gap-5 sm:flex-row sm:items-center">
+        <div className="relative mx-auto h-44 w-44">
+          <div
+            className="h-44 w-44 rounded-full shadow-lg shadow-emerald-950/40"
+            style={{ background: `conic-gradient(${gradients.join(', ')})` }}
+          />
+          <div className="absolute inset-7 rounded-full bg-emerald-950/90 backdrop-blur">
+            <div className="flex h-full flex-col items-center justify-center">
+              <p className="text-[11px] uppercase tracking-wide text-stone-300">Total</p>
+              <p className="text-sm font-semibold text-stone-100">{formatEUR(totalValue)}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-2">
+          {segments.map((segment, index) => {
+            const pct = totalValue <= 0 ? 0 : (segment.value / totalValue) * 100;
+            return (
+              <div key={segment.id} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: ALLOCATION_COLORS[index % ALLOCATION_COLORS.length] }}
+                  />
+                  <span className="text-stone-200">{segment.label}</span>
+                </div>
+                <span className="text-stone-100">{pct.toFixed(1)}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const buildMonthlyChanges = (history: PortfolioHistoryPoint[]) => {
+  const known = history
+    .filter((entry) => entry.totalValueEUR !== null)
+    .sort((a, b) => a.date - b.date);
+  const lastByMonth = new Map<string, number>();
+
+  for (const point of known) {
+    const date = new Date(point.date);
+    const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    lastByMonth.set(key, point.totalValueEUR as number);
+  }
+
+  const monthly = Array.from(lastByMonth.entries())
+    .map(([monthKey, value]) => ({ monthKey, value }))
+    .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+  const changes: Array<{ month: string; delta: number }> = [];
+  for (let index = 1; index < monthly.length; index += 1) {
+    const current = monthly[index];
+    const previous = monthly[index - 1];
+    const date = new Date(`${current.monthKey}-01T00:00:00Z`);
+    const month = date.toLocaleDateString('en-US', { month: 'short' });
+    changes.push({
+      month,
+      delta: current.value - previous.value,
+    });
+  }
+
+  return changes.slice(-8);
+};
+
+const MonthlyChangeBars: React.FC<{ history: PortfolioHistoryPoint[] }> = ({ history }) => {
+  const changes = buildMonthlyChanges(history);
+
+  if (changes.length === 0) {
+    return (
+      <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white">Monthly Momentum</h3>
+        <p className="mt-2 text-sm text-stone-300">
+          Add at least two months of valuation history to see momentum.
+        </p>
+      </div>
+    );
+  }
+
+  const maxAbs = Math.max(1, ...changes.map((entry) => Math.abs(entry.delta)));
+
+  return (
+    <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white">Monthly Momentum</h3>
+      <p className="mt-1 text-xs text-stone-300">Month-over-month change in total portfolio value</p>
+      <div className="mt-4 grid grid-cols-4 gap-3 sm:grid-cols-8">
+        {changes.map((entry) => {
+          const height = Math.max(8, (Math.abs(entry.delta) / maxAbs) * 88);
+          const positive = entry.delta >= 0;
+          return (
+            <div key={entry.month} className="flex flex-col items-center gap-1">
+              <div className="flex h-24 w-8 items-end rounded bg-emerald-950/60 p-1">
+                <div
+                  className={`w-full rounded ${positive ? 'bg-emerald-300' : 'bg-rose-300'}`}
+                  style={{ height: `${height}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-stone-300">{entry.month}</span>
+              <span className={`text-[10px] ${positive ? 'text-emerald-200' : 'text-rose-200'}`}>
+                {positive ? '+' : '-'}
+                {Math.abs(entry.delta).toFixed(0)}
+              </span>
             </div>
           );
         })}
@@ -335,7 +505,7 @@ const Dashboard: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="py-6 text-center text-slate-300">Loading...</div>;
+    return <div className="py-6 text-center text-stone-300">Loading...</div>;
   }
 
   return (
@@ -365,7 +535,7 @@ const Dashboard: React.FC = () => {
       )}
 
       <div className="glass-card animate-fade-up rounded-2xl p-6 text-center">
-        <p className="text-sm font-medium text-slate-300">Total Portfolio Value</p>
+        <p className="text-sm font-medium text-stone-300">Total Portfolio Value</p>
         <p className="mt-2 text-4xl font-bold text-white sm:text-5xl">
           {summary.totalValueEUR !== null ? formatEUR(summary.totalValueEUR) : 'Missing price/FX'}
         </p>
@@ -385,16 +555,20 @@ const Dashboard: React.FC = () => {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <HoldingsBars holdings={summary.byTicker} />
+        <AllocationDonut holdings={summary.byTicker} />
+      </div>
 
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <MonthlyChangeBars history={summary.history} />
         <div className="glass-card animate-fade-up animate-delay-2 rounded-xl p-6">
           <h3 className="text-lg font-semibold text-white">By Platform</h3>
           <div className="mt-4 space-y-3">
             {summary.byPlatform.length === 0 ? (
-              <p className="text-sm text-slate-300">No platforms</p>
+              <p className="text-sm text-stone-300">No platforms</p>
             ) : (
               summary.byPlatform.map((entry) => (
                 <div key={entry.platformId} className="flex justify-between text-sm">
-                  <span className="text-slate-200">{entry.name}</span>
+                  <span className="text-stone-200">{entry.name}</span>
                   <span className="font-semibold text-white">
                     {entry.valueEUR !== null ? formatEUR(entry.valueEUR) : 'Missing FX'}
                   </span>
@@ -406,11 +580,11 @@ const Dashboard: React.FC = () => {
           <h3 className="mt-8 text-lg font-semibold text-white">By Asset Type</h3>
           <div className="mt-4 space-y-3">
             {summary.byType.length === 0 ? (
-              <p className="text-sm text-slate-300">No assets</p>
+              <p className="text-sm text-stone-300">No assets</p>
             ) : (
               summary.byType.map((entry) => (
                 <div key={entry.type} className="flex justify-between text-sm">
-                  <span className="text-slate-200">{entry.type}</span>
+                  <span className="text-stone-200">{entry.type}</span>
                   <span className="font-semibold text-white">
                     {entry.valueEUR !== null ? formatEUR(entry.valueEUR) : 'Missing FX'}
                   </span>
@@ -422,9 +596,9 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="glass-card animate-fade-up animate-delay-3 overflow-hidden rounded-xl">
-        <div className="border-b border-slate-700/60 px-6 py-4">
+        <div className="border-b border-stone-300/15 px-6 py-4">
           <h3 className="text-lg font-semibold text-white">Net Holdings by Ticker</h3>
-          <p className="mt-1 text-xs text-slate-300">
+          <p className="mt-1 text-xs text-stone-300">
             One consolidated line per ticker (BUY minus SELL across all platforms)
           </p>
         </div>
@@ -440,10 +614,10 @@ const Dashboard: React.FC = () => {
                 <th className="px-6 py-3 text-right font-semibold">Value EUR</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-emerald-900/40">
               {summary.byTicker.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-slate-400">
+                  <td colSpan={6} className="px-6 py-4 text-center text-stone-300">
                     No holdings yet
                   </td>
                 </tr>
@@ -451,14 +625,14 @@ const Dashboard: React.FC = () => {
                 summary.byTicker.map((holding) => (
                   <tr key={holding.assetId} className="transition hover:bg-emerald-950/45">
                     <td className="px-6 py-4 font-semibold text-white">{holding.asset.symbol}</td>
-                    <td className="px-6 py-4 text-slate-200">{holding.asset.name}</td>
-                    <td className="px-6 py-4 text-right text-slate-100">{holding.qty.toFixed(4)}</td>
-                    <td className="px-6 py-4 text-right text-slate-100">
+                    <td className="px-6 py-4 text-stone-200">{holding.asset.name}</td>
+                    <td className="px-6 py-4 text-right text-stone-100">{holding.qty.toFixed(4)}</td>
+                    <td className="px-6 py-4 text-right text-stone-100">
                       {holding.latestPrice !== null
                         ? `${holding.asset.currency} ${holding.latestPrice.toFixed(2)}`
                         : 'Missing price'}
                     </td>
-                    <td className="px-6 py-4 text-right text-slate-100">
+                    <td className="px-6 py-4 text-right text-stone-100">
                       {holding.fxRate !== null ? holding.fxRate.toFixed(4) : 'Missing FX'}
                     </td>
                     <td className="px-6 py-4 text-right font-semibold text-white">
@@ -473,7 +647,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="glass-card animate-fade-up animate-delay-3 overflow-hidden rounded-xl">
-        <div className="border-b border-slate-700/60 px-6 py-4">
+        <div className="border-b border-stone-300/15 px-6 py-4">
           <h3 className="text-lg font-semibold text-white">All Positions by Platform</h3>
         </div>
         <div className="overflow-x-auto">
@@ -489,29 +663,29 @@ const Dashboard: React.FC = () => {
                 <th className="px-6 py-3 text-right font-semibold">Value EUR</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-emerald-900/40">
               {summary.positions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-4 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-4 text-center text-stone-300">
                     No positions yet
                   </td>
                 </tr>
               ) : (
                 summary.positions.map((position) => (
                   <tr key={`${position.assetId}:${position.platformId}`} className="transition hover:bg-emerald-950/45">
-                    <td className="px-6 py-4 text-slate-100">
+                    <td className="px-6 py-4 text-stone-100">
                       <div>{position.asset.name}</div>
-                      <div className="text-xs text-slate-400">{position.asset.symbol}</div>
+                      <div className="text-xs text-stone-300">{position.asset.symbol}</div>
                     </td>
-                    <td className="px-6 py-4 text-slate-200">{position.platform.name}</td>
-                    <td className="px-6 py-4 text-slate-200">{position.asset.type}</td>
-                    <td className="px-6 py-4 text-right text-slate-100">{position.qty.toFixed(4)}</td>
-                    <td className="px-6 py-4 text-right text-slate-100">
+                    <td className="px-6 py-4 text-stone-200">{position.platform.name}</td>
+                    <td className="px-6 py-4 text-stone-200">{position.asset.type}</td>
+                    <td className="px-6 py-4 text-right text-stone-100">{position.qty.toFixed(4)}</td>
+                    <td className="px-6 py-4 text-right text-stone-100">
                       {position.latestPrice !== null
                         ? `${position.asset.currency} ${position.latestPrice.toFixed(2)}`
                         : 'Missing price'}
                     </td>
-                    <td className="px-6 py-4 text-right text-slate-100">
+                    <td className="px-6 py-4 text-right text-stone-100">
                       {position.fxRate !== null ? position.fxRate.toFixed(4) : 'Missing FX'}
                     </td>
                     <td className="px-6 py-4 text-right font-semibold text-white">

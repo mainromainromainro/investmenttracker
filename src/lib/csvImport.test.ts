@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NORMALIZED_TRANSACTION_HEADERS,
   parseNormalizedTransactionsCsv,
+  suggestCsvColumnMapping,
 } from './csvImport';
 
 const buildCsv = (rows: string[]): string => rows.join('\n');
@@ -129,5 +130,46 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(record.qty).toBeCloseTo(0.048592, 6);
     expect(record.price).toBeCloseTo(108.246, 3);
     expect(record.fee).toBeCloseTo(0.2, 3);
+  });
+
+  it('suggests a mapping with confidence for unknown headers', () => {
+    const csv = buildCsv([
+      'when,where,side,tkr,units,px,ccy',
+      '2025-02-08,Degiro,BUY,VWCE,2,123.45,EUR',
+    ]);
+
+    const suggestion = suggestCsvColumnMapping(csv);
+    expect(suggestion.headers).toHaveLength(7);
+    expect(suggestion.mapping.date).toBe('when');
+    expect(suggestion.mapping.platform).toBe('where');
+    expect(suggestion.mapping.kind).toBe('side');
+    expect(suggestion.mapping.qty).toBe('units');
+    expect((suggestion.confidence.kind ?? 0)).toBeGreaterThan(0.5);
+  });
+
+  it('parses rows using manual mapping override', () => {
+    const csv = buildCsv([
+      'when,where,side,tkr,units,px,ccy',
+      '2025-02-08,Degiro,BUY,VWCE,2,123.45,EUR',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultCurrency: 'EUR',
+      columnMapping: {
+        date: 'when',
+        platform: 'where',
+        kind: 'side',
+        asset_symbol: 'tkr',
+        qty: 'units',
+        price: 'px',
+        currency: 'ccy',
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.assetSymbol).toBe('VWCE');
+    expect(result.records[0]?.kind).toBe('BUY');
+    expect(result.records[0]?.price).toBeCloseTo(123.45);
   });
 });

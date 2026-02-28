@@ -39,6 +39,20 @@ export interface CsvParseResult {
   errors: CsvParseError[];
 }
 
+export type CsvColumnMapping = Partial<Record<CsvHeader, string>>;
+
+export interface CsvColumnMappingSuggestion {
+  headers: string[];
+  mapping: CsvColumnMapping;
+  confidence: Partial<Record<CsvHeader, number>>;
+  signature: string;
+}
+
+export interface ParseNormalizedTransactionsOptions {
+  defaultCurrency?: string;
+  columnMapping?: CsvColumnMapping;
+}
+
 const TRANSACTION_KINDS: TransactionKind[] = [
   'BUY',
   'SELL',
@@ -68,6 +82,21 @@ export const NORMALIZED_TRANSACTION_HEADERS: CsvHeader[] = [
   'note',
 ];
 
+export const CSV_IMPORT_FIELDS: CsvHeader[] = [
+  'date',
+  'platform',
+  'kind',
+  'asset_symbol',
+  'asset_name',
+  'asset_type',
+  'qty',
+  'price',
+  'currency',
+  'cash_currency',
+  'fee',
+  'note',
+];
+
 const HEADER_ALIASES: Record<string, CsvHeader> = {
   transaction_date: 'date',
   trade_date: 'date',
@@ -84,8 +113,10 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   source: 'platform',
   account: 'platform',
   account_name: 'platform',
+  where: 'platform',
   courtier: 'platform',
   ticker: 'asset_symbol',
+  tkr: 'asset_symbol',
   ticker_symbol: 'asset_symbol',
   symbol: 'asset_symbol',
   instrument: 'asset_symbol',
@@ -110,6 +141,7 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   shares: 'qty',
   quantity: 'qty',
   qty: 'qty',
+  size: 'qty',
   volume: 'qty',
   filled_quantity: 'qty',
   executed_quantity: 'qty',
@@ -117,6 +149,7 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   nombre: 'qty',
   amount: 'qty',
   unit_price: 'price',
+  px: 'price',
   price_per_share: 'price',
   execution_price: 'price',
   average_price: 'price',
@@ -222,19 +255,29 @@ const DEFAULT_ASSET_TYPE: AssetType = 'STOCK';
 const normalizeHeader = (header: string | undefined): CsvHeader | string =>
   (header ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 
-const inferHeaderAlias = (header: string | undefined): CsvHeader | null => {
+const inferHeaderAliasWithConfidence = (
+  header: string | undefined,
+): { header: CsvHeader | null; confidence: number } => {
   const normalized = normalizeHeader(header) as string;
+  if (!normalized) return { header: null, confidence: 0 };
+  if (CSV_IMPORT_FIELDS.includes(normalized as CsvHeader)) {
+    return { header: normalized as CsvHeader, confidence: 1 };
+  }
+
   const direct = HEADER_ALIASES[normalized];
-  if (direct) return direct;
+  if (direct) return { header: direct, confidence: 0.98 };
 
   const compact = normalized.replace(/[^a-z0-9_]/g, '');
   for (const rule of HEADER_GUESS_RULES) {
     if (rule.pattern.test(normalized) || rule.pattern.test(compact)) {
-      return rule.header;
+      return { header: rule.header, confidence: 0.72 };
     }
   }
-  return null;
+  return { header: null, confidence: 0 };
 };
+
+const inferHeaderAlias = (header: string | undefined): CsvHeader | null =>
+  inferHeaderAliasWithConfidence(header).header;
 
 const isRowEmpty = (row: string[]): boolean =>
   row.every((value) => (value ?? '').trim() === '');
@@ -455,9 +498,187 @@ const inferCurrencyFromSymbol = (symbol?: string): string | null => {
   return null;
 };
 
+const applyColumnMappingOverrides = (
+  rawHeaders: string[],
+  inferredHeaders: Array<CsvHeader | string | null>,
+  columnMapping?: CsvColumnMapping,
+): Array<CsvHeader | string | null> => {
+  if (!columnMapping) return inferredHeaders;
+
+  const overrideBySourceHeader = new Map<string, CsvHeader>();
+  for (const field of CSV_IMPORT_FIELDS) {
+    const source = columnMapping[field];
+    if (!source) continue;
+    const normalizedSource = normalizeHeader(source) as string;
+    if (!normalizedSource) continue;
+    overrideBySourceHeader.set(normalizedSource, field);
+  }
+
+  if (overrideBySourceHeader.size === 0) return inferredHeaders;
+
+  return rawHeaders.map((rawHeader, index) => {
+    const normalizedRaw = normalizeHeader(rawHeader) as string;
+    return overrideBySourceHeader.get(normalizedRaw) ?? inferredHeaders[index];
+  });
+};
+
+const safeRatio = (count: number, total: number): number =>
+  total <= 0 ? 0 : count / total;
+
+const buildColumnProfiles = (
+  rows: string[][],
+  headerCount: number,
+): Array<{
+  dateRatio: number;
+  numberRatio: number;
+  currencyRatio: number;
+  kindRatio: number;
+  symbolRatio: number;
+}> => {
+  const sampleRows = rows.slice(1, 61);
+
+  return Array.from({ length: headerCount }, (_, columnIndex) => {
+    const values = sampleRows
+      .map((row) => row[columnIndex] ?? '')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
+    const total = values.length;
+    if (total === 0) {
+      return {
+        dateRatio: 0,
+        numberRatio: 0,
+        currencyRatio: 0,
+        kindRatio: 0,
+        symbolRatio: 0,
+      };
+    }
+
+    let dateCount = 0;
+    let numberCount = 0;
+    let currencyCount = 0;
+    let kindCount = 0;
+    let symbolCount = 0;
+
+    for (const value of values) {
+      if (parseDate(value) !== null) dateCount += 1;
+      if (parseFloatSafe(value) !== null) numberCount += 1;
+      if (normalizeCurrency(value) !== null) currencyCount += 1;
+      if (normalizeKind(value) !== null) kindCount += 1;
+      if (/^[A-Z0-9.\-/]{1,20}$/i.test(value)) symbolCount += 1;
+    }
+
+    return {
+      dateRatio: safeRatio(dateCount, total),
+      numberRatio: safeRatio(numberCount, total),
+      currencyRatio: safeRatio(currencyCount, total),
+      kindRatio: safeRatio(kindCount, total),
+      symbolRatio: safeRatio(symbolCount, total),
+    };
+  });
+};
+
+const scoreFieldWithProfile = (
+  field: CsvHeader,
+  profile: {
+    dateRatio: number;
+    numberRatio: number;
+    currencyRatio: number;
+    kindRatio: number;
+    symbolRatio: number;
+  },
+): number => {
+  switch (field) {
+    case 'date':
+      return profile.dateRatio * 0.6;
+    case 'kind':
+      return profile.kindRatio * 0.62;
+    case 'currency':
+    case 'cash_currency':
+      return profile.currencyRatio * 0.6;
+    case 'qty':
+    case 'price':
+    case 'fee':
+      return profile.numberRatio * 0.45;
+    case 'asset_symbol':
+      return profile.symbolRatio * 0.45;
+    default:
+      return 0;
+  }
+};
+
+export const buildCsvHeaderSignature = (headers: string[]): string =>
+  headers.map((header) => normalizeHeader(header) as string).join('|');
+
+export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSuggestion => {
+  const rows = parseCsv(csvText);
+  const headers = rows[0] ?? [];
+  const signature = buildCsvHeaderSignature(headers);
+
+  if (headers.length === 0) {
+    return {
+      headers: [],
+      mapping: {},
+      confidence: {},
+      signature,
+    };
+  }
+
+  const columnProfiles = buildColumnProfiles(rows, headers.length);
+  const bestByField: Record<CsvHeader, { header: string; score: number } | null> = {
+    date: null,
+    platform: null,
+    kind: null,
+    asset_symbol: null,
+    asset_name: null,
+    asset_type: null,
+    qty: null,
+    price: null,
+    currency: null,
+    cash_currency: null,
+    fee: null,
+    note: null,
+  };
+
+  for (let index = 0; index < headers.length; index += 1) {
+    const rawHeader = headers[index];
+    const alias = inferHeaderAliasWithConfidence(rawHeader);
+    const profile = columnProfiles[index];
+
+    for (const field of CSV_IMPORT_FIELDS) {
+      const aliasScore = alias.header === field ? alias.confidence : 0;
+      const profileScore = scoreFieldWithProfile(field, profile);
+      const totalScore = aliasScore + profileScore;
+      if (totalScore < 0.26) continue;
+
+      const existing = bestByField[field];
+      if (!existing || totalScore > existing.score) {
+        bestByField[field] = { header: rawHeader, score: totalScore };
+      }
+    }
+  }
+
+  const mapping: CsvColumnMapping = {};
+  const confidence: Partial<Record<CsvHeader, number>> = {};
+  for (const field of CSV_IMPORT_FIELDS) {
+    const best = bestByField[field];
+    if (!best) continue;
+    mapping[field] = best.header;
+    confidence[field] =
+      best.score >= 1 ? 0.92 : Math.max(0, Math.min(0.9, best.score * 0.88));
+  }
+
+  return {
+    headers,
+    mapping,
+    confidence,
+    signature,
+  };
+};
+
 export const parseNormalizedTransactionsCsv = (
   csvText: string,
-  options?: { defaultCurrency?: string },
+  options?: ParseNormalizedTransactionsOptions,
 ): CsvParseResult => {
   const rows = parseCsv(csvText);
   const errors: CsvParseError[] = [];
@@ -468,7 +689,14 @@ export const parseNormalizedTransactionsCsv = (
 
   const rawHeaders = rows[0];
   const normalizedHeaders = rawHeaders.map((header) => normalizeHeader(header));
-  const canonicalHeaders = normalizedHeaders.map((header) => inferHeaderAlias(header) ?? header);
+  const inferredCanonicalHeaders = normalizedHeaders.map(
+    (header) => inferHeaderAlias(header) ?? header,
+  );
+  const canonicalHeaders = applyColumnMappingOverrides(
+    rawHeaders,
+    inferredCanonicalHeaders,
+    options?.columnMapping,
+  );
 
   const missingHeaders = REQUIRED_HEADERS.filter(
     (header) => !canonicalHeaders.includes(header),
