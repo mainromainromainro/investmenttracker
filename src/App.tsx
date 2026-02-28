@@ -22,21 +22,21 @@ const navItems = [
 function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
-        <div className="pointer-events-none absolute -left-24 top-[-120px] h-72 w-72 rounded-full bg-cyan-400/25 blur-3xl" />
-        <div className="pointer-events-none absolute right-[-120px] top-48 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-[-80px] left-1/3 h-72 w-72 rounded-full bg-fuchsia-500/15 blur-3xl" />
+      <div className="relative min-h-screen overflow-hidden bg-emerald-950 text-stone-100">
+        <div className="pointer-events-none absolute -left-24 top-[-120px] h-72 w-72 rounded-full bg-emerald-300/20 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-120px] top-48 h-80 w-80 rounded-full bg-lime-300/10 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-[-80px] left-1/3 h-72 w-72 rounded-full bg-teal-300/10 blur-3xl" />
 
         <header className="sticky top-0 z-20 px-4 pb-3 pt-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl glass-nav animate-fade-up">
             <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center justify-between gap-4">
-                <Link to="/" className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                <Link to="/" className="text-xl font-semibold tracking-tight text-stone-100 sm:text-2xl">
                   Investment Tracker
                 </Link>
                 <NavLink
                   to="/import"
-                  className="inline-flex items-center rounded-lg bg-cyan-400/90 px-3 py-1.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+                  className="inline-flex items-center rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-semibold text-emerald-950 transition hover:bg-stone-200"
                 >
                   Import CSV
                 </NavLink>
@@ -49,8 +49,8 @@ function App() {
                     className={({ isActive }) =>
                       `rounded-md px-3 py-1.5 text-sm transition ${
                         isActive
-                          ? 'bg-white/20 text-white shadow-sm'
-                          : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                          ? 'bg-stone-100/20 text-stone-50 shadow-sm'
+                          : 'text-stone-300 hover:bg-stone-100/10 hover:text-stone-100'
                       }`
                     }
                     end={item.to === '/'}

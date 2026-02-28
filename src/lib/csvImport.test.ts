@@ -97,4 +97,37 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.message).toContain('price doit');
   });
+
+  it('auto-detects common broker column names and action aliases', () => {
+    const csv = buildCsv([
+      'Trade Date,Broker,Action,Ticker Symbol,Instrument Name,Quantity,Unit Price,Currency,Commission',
+      '2025-02-01,Interactive Brokers,Purchase,MSFT,Microsoft,12,420.55,USD,1.25',
+      '2025-02-05,Interactive Brokers,Sell,MSFT,Microsoft,2,430.10,USD,1.05',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, { defaultCurrency: 'EUR' });
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0]?.kind).toBe('BUY');
+    expect(result.records[1]?.kind).toBe('SELL');
+    expect(result.records[0]?.assetSymbol).toBe('MSFT');
+    expect(result.records[0]?.qty).toBe(12);
+    expect(result.records[0]?.price).toBe(420.55);
+  });
+
+  it('parses European decimal formats and french-like headers', () => {
+    const csv = buildCsv([
+      'Date operation,Courtier,Operation,Ticker,Quantite,Prix,Devise,Frais',
+      '01/02/2025,Trading212,Achat,VUSA,"0,048592","108,246",EUR,"0,20"',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, { defaultCurrency: 'EUR' });
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    const record = result.records[0]!;
+    expect(record.kind).toBe('BUY');
+    expect(record.qty).toBeCloseTo(0.048592, 6);
+    expect(record.price).toBeCloseTo(108.246, 3);
+    expect(record.fee).toBeCloseTo(0.2, 3);
+  });
 });

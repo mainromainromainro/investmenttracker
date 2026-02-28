@@ -26,8 +26,8 @@ const StatCard: React.FC<{ label: string; value: string; tone?: 'neutral' | 'pos
     tone === 'positive'
       ? 'text-emerald-300'
       : tone === 'warn'
-        ? 'text-amber-300'
-        : 'text-cyan-200';
+        ? 'text-amber-200'
+        : 'text-stone-100';
 
   return (
     <div className="glass-card animate-fade-up rounded-xl p-4">
@@ -84,14 +84,14 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
       : (growth / (firstPoint.totalValueEUR as number)) * 100;
 
   return (
-    <div className="animate-fade-up animate-delay-1 rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-cyan-950 p-6 shadow-2xl shadow-cyan-900/25">
+    <div className="animate-fade-up animate-delay-1 rounded-2xl bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-900 p-6 shadow-2xl shadow-emerald-950/30">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h3 className="text-xl font-semibold text-white">Portfolio Evolution</h3>
-          <p className="text-sm text-blue-100">Consolidated value through buy/sell movements</p>
+          <p className="text-sm text-stone-200">Consolidated value through buy/sell movements</p>
         </div>
         <div className="text-right">
-          <p className="text-xs uppercase tracking-wide text-blue-200">Latest</p>
+          <p className="text-xs uppercase tracking-wide text-stone-300">Latest</p>
           <p className="text-2xl font-bold text-white">{formatEUR(lastPoint.totalValueEUR as number)}</p>
           <p className={`text-sm font-medium ${growth >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
             {growth >= 0 ? '+' : ''}
@@ -105,12 +105,12 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
         <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full min-w-[720px]">
           <defs>
             <linearGradient id="portfolioAreaGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
-              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="#f5f5f0" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#f5f5f0" stopOpacity="0.04" />
             </linearGradient>
             <linearGradient id="portfolioLineGradient" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#38bdf8" />
-              <stop offset="100%" stopColor="#34d399" />
+              <stop offset="0%" stopColor="#d9ead3" />
+              <stop offset="100%" stopColor="#4ade80" />
             </linearGradient>
           </defs>
 
@@ -148,7 +148,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
         </svg>
       </div>
 
-      <div className="mt-2 flex justify-between text-xs text-blue-100">
+      <div className="mt-2 flex justify-between text-xs text-stone-300">
         <span>{new Date(firstPoint.date).toLocaleDateString()}</span>
         <span>{new Date(lastPoint.date).toLocaleDateString()}</span>
       </div>
@@ -186,7 +186,7 @@ const HoldingsBars: React.FC<{
               </div>
               <div className="h-2 rounded-full bg-slate-800/80">
                 <div
-                  className="h-2 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-700"
+                  className="h-2 rounded-full bg-gradient-to-r from-stone-200 to-emerald-300 transition-all duration-700"
                   style={{ width: `${width}%` }}
                 />
               </div>
@@ -346,7 +346,7 @@ const Dashboard: React.FC = () => {
           type="button"
           onClick={handleSyncLiveData}
           disabled={syncing || assets.length === 0}
-          className="h-fit rounded-lg border border-cyan-300/40 bg-cyan-400/15 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-fit rounded-lg border border-stone-100/50 bg-stone-100 px-4 py-2 text-sm font-medium text-emerald-950 transition hover:bg-stone-200 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {syncing ? 'Syncing live data...' : 'Sync live prices & FX'}
         </button>
@@ -359,7 +359,7 @@ const Dashboard: React.FC = () => {
       )}
 
       {syncMessage && (
-        <div className="rounded-md border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+        <div className="rounded-md border border-emerald-200/35 bg-emerald-500/10 px-4 py-3 text-sm text-stone-100">
           {syncMessage}
         </div>
       )}
@@ -430,7 +430,7 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900/60 text-slate-200">
+            <thead className="bg-emerald-950/55 text-stone-200">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold">Ticker</th>
                 <th className="px-6 py-3 text-left font-semibold">Asset</th>
@@ -449,7 +449,7 @@ const Dashboard: React.FC = () => {
                 </tr>
               ) : (
                 summary.byTicker.map((holding) => (
-                  <tr key={holding.assetId} className="transition hover:bg-slate-900/50">
+                  <tr key={holding.assetId} className="transition hover:bg-emerald-950/45">
                     <td className="px-6 py-4 font-semibold text-white">{holding.asset.symbol}</td>
                     <td className="px-6 py-4 text-slate-200">{holding.asset.name}</td>
                     <td className="px-6 py-4 text-right text-slate-100">{holding.qty.toFixed(4)}</td>
@@ -478,7 +478,7 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900/60 text-slate-200">
+            <thead className="bg-emerald-950/55 text-stone-200">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold">Asset</th>
                 <th className="px-6 py-3 text-left font-semibold">Platform</th>
@@ -498,7 +498,7 @@ const Dashboard: React.FC = () => {
                 </tr>
               ) : (
                 summary.positions.map((position) => (
-                  <tr key={`${position.assetId}:${position.platformId}`} className="transition hover:bg-slate-900/50">
+                  <tr key={`${position.assetId}:${position.platformId}`} className="transition hover:bg-emerald-950/45">
                     <td className="px-6 py-4 text-slate-100">
                       <div>{position.asset.name}</div>
                       <div className="text-xs text-slate-400">{position.asset.symbol}</div>

@@ -180,7 +180,7 @@ const CsvImportSection: React.FC = () => {
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Import CSV normalisé</h3>
             <p className="text-sm text-gray-600">
-              Fournissez un fichier CSV avec les colonnes suivantes (ordre libre) :
+              Fournissez un CSV: les noms de colonnes sont reconnus automatiquement (ordre libre) :
             </p>
             <span className="block font-mono text-xs text-gray-700 mt-2 break-all">
               {csvHeaderExample}
