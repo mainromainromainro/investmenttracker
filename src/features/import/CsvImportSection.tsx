@@ -19,8 +19,15 @@ import { useFxStore } from '../../stores/fxStore';
 
 const BASE_CURRENCY = 'EUR';
 const COMMON_CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'CAD', 'SEK'];
-const REQUIRED_FIELDS: CsvHeader[] = ['date', 'platform', 'kind'];
+const REQUIRED_FIELDS: CsvHeader[] = ['date', 'kind'];
 const MAPPING_STORAGE_KEY = 'investment-tracker.csv.mapping-templates.v1';
+const BROKER_FROM_CSV = '__from_csv__';
+const BROKER_CUSTOM = '__custom__';
+
+interface CsvMappingTemplateMemory {
+  mapping: CsvColumnMapping;
+  broker?: string;
+}
 
 const FIELD_LABELS: Record<CsvHeader, string> = {
   date: 'Date',
@@ -54,19 +61,44 @@ const fetchFxRate = async (currency: string): Promise<number | null> => {
   }
 };
 
-const loadMappingTemplates = (): Record<string, CsvColumnMapping> => {
+const normalizeStoredTemplate = (value: unknown): CsvMappingTemplateMemory => {
+  if (!value || typeof value !== 'object') {
+    return { mapping: {} };
+  }
+
+  const candidate = value as { mapping?: unknown; broker?: unknown };
+  if (candidate.mapping && typeof candidate.mapping === 'object') {
+    return {
+      mapping: candidate.mapping as CsvColumnMapping,
+      broker: typeof candidate.broker === 'string' ? candidate.broker : undefined,
+    };
+  }
+
+  // Backward compatibility: previous format stored only the mapping object.
+  return {
+    mapping: value as CsvColumnMapping,
+  };
+};
+
+const loadMappingTemplates = (): Record<string, CsvMappingTemplateMemory> => {
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(MAPPING_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, CsvColumnMapping>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const normalized: Record<string, CsvMappingTemplateMemory> = {};
+    for (const [signature, value] of Object.entries(parsed)) {
+      normalized[signature] = normalizeStoredTemplate(value);
+    }
+    return normalized;
   } catch {
     return {};
   }
 };
 
-const saveMappingTemplates = (templates: Record<string, CsvColumnMapping>) => {
+const saveMappingTemplates = (templates: Record<string, CsvMappingTemplateMemory>) => {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(MAPPING_STORAGE_KEY, JSON.stringify(templates));
 };
@@ -113,6 +145,20 @@ const confidenceText = (value: number): { label: string; className: string } => 
   return { label: 'Unmapped', className: 'bg-slate-500/15 text-slate-200 border-slate-300/30' };
 };
 
+const getBrokerFromSelection = (
+  selection: string,
+  customBrokerName: string,
+): string | undefined => {
+  if (selection === BROKER_CUSTOM) {
+    const trimmed = customBrokerName.trim();
+    return trimmed || undefined;
+  }
+  if (!selection || selection === BROKER_FROM_CSV) {
+    return undefined;
+  }
+  return selection;
+};
+
 const useRefreshStores = () => {
   return useMemo(
     () => async () => {
@@ -129,6 +175,9 @@ const useRefreshStores = () => {
 };
 
 const CsvImportSection: React.FC = () => {
+  const platforms = usePlatformStore((s) => s.platforms);
+  const fetchPlatforms = usePlatformStore((s) => s.fetchPlatforms);
+
   const [csvStatus, setCsvStatus] = useState<'idle' | 'parsing' | 'mapping' | 'ready' | 'importing' | 'error'>(
     'idle',
   );
@@ -144,6 +193,8 @@ const CsvImportSection: React.FC = () => {
   const [columnMapping, setColumnMapping] = useState<CsvColumnMapping>({});
   const [mappingConfidence, setMappingConfidence] = useState<Partial<Record<CsvHeader, number>>>({});
   const [rememberMapping, setRememberMapping] = useState(true);
+  const [brokerSelection, setBrokerSelection] = useState<string>(BROKER_FROM_CSV);
+  const [customBrokerName, setCustomBrokerName] = useState<string>('');
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const refreshStores = useRefreshStores();
 
@@ -158,6 +209,8 @@ const CsvImportSection: React.FC = () => {
     setSuggestedMapping({});
     setColumnMapping({});
     setMappingConfidence({});
+    setBrokerSelection(BROKER_FROM_CSV);
+    setCustomBrokerName('');
     if (clearMessage) {
       setCsvMessage(null);
       setFxMessage(null);
@@ -169,10 +222,16 @@ const CsvImportSection: React.FC = () => {
   };
 
   useEffect(() => {
+    void fetchPlatforms();
+  }, [fetchPlatforms]);
+
+  useEffect(() => {
     if (!csvText) return;
+    const selectedBroker = getBrokerFromSelection(brokerSelection, customBrokerName);
 
     const result = parseNormalizedTransactionsCsv(csvText, {
       defaultCurrency,
+      defaultPlatform: selectedBroker,
       columnMapping,
     });
 
@@ -209,7 +268,15 @@ const CsvImportSection: React.FC = () => {
 
     setCsvStatus(requiresReview ? 'mapping' : 'ready');
     setCsvMessage(`${result.records.length} transactions prêtes à être importées.`);
-  }, [csvText, columnMapping, defaultCurrency, suggestedMapping, mappingConfidence]);
+  }, [
+    csvText,
+    columnMapping,
+    defaultCurrency,
+    suggestedMapping,
+    mappingConfidence,
+    brokerSelection,
+    customBrokerName,
+  ]);
 
   const handleCsvFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     setCsvErrors([]);
@@ -227,9 +294,10 @@ const CsvImportSection: React.FC = () => {
       const text = await file.text();
       const suggestion = suggestCsvColumnMapping(text);
       const storedTemplates = loadMappingTemplates();
-      const storedMapping = suggestion.signature
-        ? sanitizeMapping(storedTemplates[suggestion.signature] ?? {}, suggestion.headers)
-        : {};
+      const storedTemplate = suggestion.signature
+        ? storedTemplates[suggestion.signature]
+        : undefined;
+      const storedMapping = sanitizeMapping(storedTemplate?.mapping ?? {}, suggestion.headers);
       const suggested = sanitizeMapping(suggestion.mapping, suggestion.headers);
       const mergedMapping = {
         ...suggested,
@@ -242,6 +310,18 @@ const CsvImportSection: React.FC = () => {
       setSuggestedMapping(suggested);
       setColumnMapping(mergedMapping);
       setMappingConfidence(suggestion.confidence);
+      if (storedTemplate?.broker) {
+        if (platforms.some((platform) => platform.name === storedTemplate.broker)) {
+          setBrokerSelection(storedTemplate.broker);
+          setCustomBrokerName('');
+        } else {
+          setBrokerSelection(BROKER_CUSTOM);
+          setCustomBrokerName(storedTemplate.broker);
+        }
+      } else {
+        setBrokerSelection(BROKER_FROM_CSV);
+        setCustomBrokerName('');
+      }
 
       if (Object.keys(storedMapping).length > 0) {
         setCsvMessage('Template de mapping reconnu automatiquement pour ce format de CSV.');
@@ -312,7 +392,10 @@ const CsvImportSection: React.FC = () => {
     try {
       if (rememberMapping && mappingSignature) {
         const templates = loadMappingTemplates();
-        templates[mappingSignature] = sanitizeMapping(columnMapping, csvHeaders);
+        templates[mappingSignature] = {
+          mapping: sanitizeMapping(columnMapping, csvHeaders),
+          broker: getBrokerFromSelection(brokerSelection, customBrokerName),
+        };
         saveMappingTemplates(templates);
       }
 
@@ -354,25 +437,61 @@ const CsvImportSection: React.FC = () => {
               {csvHeaderExample}
             </span>
           </div>
-          <div className="flex flex-col">
-            <label className="text-xs text-stone-300 font-medium mb-1">Devise par défaut</label>
-            <select
-              value={defaultCurrency}
-              onChange={(e) => setDefaultCurrency(e.target.value)}
-              className="px-2 py-1 border border-stone-300/30 bg-emerald-950/50 rounded text-sm text-stone-100"
-            >
-              {COMMON_CURRENCIES.map((currency) => (
-                <option key={currency} value={currency}>
-                  {currency}
-                </option>
-              ))}
-            </select>
+          <div className="grid grid-cols-1 gap-2 sm:min-w-[240px]">
+            <div className="flex flex-col">
+              <label className="text-xs text-stone-300 font-medium mb-1">Broker par défaut</label>
+              <select
+                value={brokerSelection}
+                onChange={(e) => setBrokerSelection(e.target.value)}
+                className="px-2 py-1 border border-stone-300/30 bg-emerald-950/50 rounded text-sm text-stone-100"
+              >
+                <option value={BROKER_FROM_CSV}>Depuis la colonne CSV (si présente)</option>
+                {platforms
+                  .map((platform) => platform.name)
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                <option value={BROKER_CUSTOM}>Nouveau broker…</option>
+              </select>
+            </div>
+
+            {brokerSelection === BROKER_CUSTOM && (
+              <div className="flex flex-col">
+                <label className="text-xs text-stone-300 font-medium mb-1">Nom du broker</label>
+                <input
+                  type="text"
+                  value={customBrokerName}
+                  onChange={(e) => setCustomBrokerName(e.target.value)}
+                  placeholder="Ex: Trade Republic"
+                  className="px-2 py-1 border border-stone-300/30 bg-emerald-950/50 rounded text-sm text-stone-100"
+                />
+              </div>
+            )}
+
+            <div className="flex flex-col">
+              <label className="text-xs text-stone-300 font-medium mb-1">Devise par défaut</label>
+              <select
+                value={defaultCurrency}
+                onChange={(e) => setDefaultCurrency(e.target.value)}
+                className="px-2 py-1 border border-stone-300/30 bg-emerald-950/50 rounded text-sm text-stone-100"
+              >
+                {COMMON_CURRENCIES.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {currency}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
         <p className="text-sm text-stone-300">
           Les types de transaction autorisés sont BUY, SELL, DEPOSIT, WITHDRAW, FEE. Pour BUY / SELL,
-          les colonnes <em>asset_*</em>, qty et price sont obligatoires. La devise par défaut est
-          utilisée si aucune colonne liée n’est fournie et qu’aucune devise n’est déduite du ticker.
+          les colonnes <em>asset_*</em>, qty et price sont obligatoires. La colonne <em>platform</em> est
+          optionnelle si vous choisissez un broker par défaut ci-dessus. La devise par défaut est utilisée
+          si aucune colonne liée n’est fournie et qu’aucune devise n’est déduite du ticker.
         </p>
       </div>
 

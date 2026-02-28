@@ -32,8 +32,8 @@ describe('parseNormalizedTransactionsCsv', () => {
 
   it('rejects missing required headers', () => {
     const csv = buildCsv([
-      'date,kind,qty',
-      '2024-01-01,BUY,10',
+      'platform,qty',
+      'DEGIRO,10',
     ]);
 
     const result = parseNormalizedTransactionsCsv(csv);
@@ -171,5 +171,35 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records[0]?.assetSymbol).toBe('VWCE');
     expect(result.records[0]?.kind).toBe('BUY');
     expect(result.records[0]?.price).toBeCloseTo(123.45);
+  });
+
+  it('accepts CSV without platform column when default platform is provided', () => {
+    const csv = buildCsv([
+      'date,kind,asset_symbol,qty,price,currency',
+      '2025-02-12,BUY,VWCE,2,123.45,EUR',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultCurrency: 'EUR',
+      defaultPlatform: 'Trading 212',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.platform).toBe('Trading 212');
+  });
+
+  it('fails without platform column when no default platform is provided', () => {
+    const csv = buildCsv([
+      'date,kind,asset_symbol,qty,price,currency',
+      '2025-02-12,BUY,VWCE,2,123.45,EUR',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultCurrency: 'EUR',
+    });
+
+    expect(result.records).toHaveLength(0);
+    expect(result.errors[0]?.message).toContain('broker');
   });
 });

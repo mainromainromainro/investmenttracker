@@ -50,6 +50,7 @@ export interface CsvColumnMappingSuggestion {
 
 export interface ParseNormalizedTransactionsOptions {
   defaultCurrency?: string;
+  defaultPlatform?: string;
   columnMapping?: CsvColumnMapping;
 }
 
@@ -63,7 +64,7 @@ const TRANSACTION_KINDS: TransactionKind[] = [
 
 const ASSET_TYPES: AssetType[] = ['ETF', 'STOCK', 'CRYPTO'];
 
-const REQUIRED_HEADERS: CsvHeader[] = ['date', 'platform', 'kind'];
+const REQUIRED_HEADERS: CsvHeader[] = ['date', 'kind'];
 const BUY_SELL_HEADERS: CsvHeader[] = [
   'asset_symbol',
   'asset_name',
@@ -686,6 +687,7 @@ export const parseNormalizedTransactionsCsv = (
     return { records: [], errors: [{ row: 0, message: 'Le fichier est vide.' }] };
   }
   const fallbackCurrency = options?.defaultCurrency ?? DEFAULT_CURRENCY;
+  const fallbackPlatform = normalizePlatform(options?.defaultPlatform);
 
   const rawHeaders = rows[0];
   const normalizedHeaders = rawHeaders.map((header) => normalizeHeader(header));
@@ -697,6 +699,7 @@ export const parseNormalizedTransactionsCsv = (
     inferredCanonicalHeaders,
     options?.columnMapping,
   );
+  const hasPlatformColumn = canonicalHeaders.includes('platform');
 
   const missingHeaders = REQUIRED_HEADERS.filter(
     (header) => !canonicalHeaders.includes(header),
@@ -709,6 +712,18 @@ export const parseNormalizedTransactionsCsv = (
         {
           row: 0,
           message: `Colonnes manquantes: ${missingHeaders.join(', ')}`,
+        },
+      ],
+    };
+  }
+
+  if (!hasPlatformColumn && !fallbackPlatform) {
+    return {
+      records: [],
+      errors: [
+        {
+          row: 0,
+          message: 'Colonne platform absente. Sélectionnez un broker par défaut dans le menu déroulant.',
         },
       ],
     };
@@ -734,9 +749,9 @@ export const parseNormalizedTransactionsCsv = (
 
     const rowErrors: string[] = [];
 
-    const platform = normalizePlatform(cells.platform);
+    const platform = normalizePlatform(cells.platform) ?? fallbackPlatform;
     if (!platform) {
-      rowErrors.push('La colonne platform est obligatoire.');
+      rowErrors.push('Broker introuvable: ajoutez la colonne platform ou sélectionnez un broker par défaut.');
     }
 
     const providedCurrency = cells.currency ? normalizeCurrency(cells.currency) : null;
