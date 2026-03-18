@@ -6,7 +6,7 @@ const ImportPage: React.FC = () => (
   <div className="space-y-6">
     <PageHeading
       title="Import CSV"
-      subtitle="Importez soit des transactions detaillees, soit des snapshots mensuels de positions pour assurer un suivi coherent de mois en mois."
+      subtitle="Choisissez le mode, la source et le compte cible avant de valider un préflight qui met en avant les doublons, le mapping et la qualité des données."
     />
     <CsvImportSection />
   </div>

@@ -1,4 +1,5 @@
 import {
+  Account,
   Asset,
   Transaction,
   PriceSnapshot,
@@ -10,7 +11,8 @@ import {
   TickerHolding,
 } from '../types';
 
-const buildPairKey = (assetId: string, platformId: string) => `${assetId}:${platformId}`;
+const buildPairKey = (assetId: string, platformId: string, accountId?: string) =>
+  `${assetId}:${platformId}:${accountId ?? '__platform__'}`;
 
 const buildSnapshotManagedPairSet = (transactions: Transaction[]): Set<string> => {
   const pairs = new Set<string>();
@@ -19,7 +21,7 @@ const buildSnapshotManagedPairSet = (transactions: Transaction[]): Set<string> =
       transaction.assetId &&
       transaction.source === 'POSITION_SNAPSHOT'
     ) {
-      pairs.add(buildPairKey(transaction.assetId, transaction.platformId));
+      pairs.add(buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId));
     }
   }
   return pairs;
@@ -37,12 +39,145 @@ const filterAuthoritativeTransactions = (
     if (!transaction.assetId) {
       return true;
     }
-    const pairKey = buildPairKey(transaction.assetId, transaction.platformId);
+    const pairKey = buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId);
     if (!snapshotManagedPairs.has(pairKey)) {
       return transaction.source !== 'POSITION_SNAPSHOT';
     }
     return transaction.source === 'POSITION_SNAPSHOT';
   });
+};
+
+const getQuantityDelta = (transaction: Transaction): number => {
+  const qty = transaction.qty ?? 0;
+  switch (transaction.kind) {
+    case 'BUY':
+    case 'TRANSFER_IN':
+    case 'STAKING_REWARD':
+    case 'AIRDROP':
+      return qty;
+    case 'SELL':
+    case 'TRANSFER_OUT':
+      return -qty;
+    default:
+      return 0;
+  }
+};
+
+const toEurAtDate = (
+  amount: number | null,
+  currency: string,
+  fxSnapshots: FxSnapshot[],
+  date: number,
+): number | null => {
+  if (amount === null) return null;
+  const fxRate = getLatestFxRateAtDate(fxSnapshots, currency, date);
+  if (fxRate === null) return null;
+  return amount * fxRate;
+};
+
+const computePositionCostState = (
+  transactions: Transaction[],
+  fxSnapshots: FxSnapshot[],
+): {
+  costBasisEUR: number | null;
+  averageCost: number | null;
+  dividendIncomeEUR: number;
+  hasKnownCostBasis: boolean;
+} => {
+  const relevantTransactions = [...transactions].sort((a, b) => a.date - b.date);
+  let qty = 0;
+  let costBasisEUR = 0;
+  let dividendIncomeEUR = 0;
+  let hasKnownCostBasis = true;
+
+  for (const transaction of relevantTransactions) {
+    const quantity = transaction.qty ?? 0;
+    const fee = transaction.fee ?? 0;
+
+    switch (transaction.kind) {
+      case 'BUY': {
+        const grossAmount = quantity * (transaction.price ?? 0) + fee;
+        const amountEUR = toEurAtDate(grossAmount, transaction.currency, fxSnapshots, transaction.date);
+        qty += quantity;
+        if (amountEUR === null) {
+          hasKnownCostBasis = false;
+        } else {
+          costBasisEUR += amountEUR;
+        }
+        break;
+      }
+      case 'TRANSFER_IN':
+      case 'STAKING_REWARD':
+      case 'AIRDROP': {
+        qty += quantity;
+        if (transaction.price === undefined) {
+          hasKnownCostBasis = false;
+          break;
+        }
+        const amountEUR = toEurAtDate(
+          quantity * transaction.price + fee,
+          transaction.currency,
+          fxSnapshots,
+          transaction.date,
+        );
+        if (amountEUR === null) {
+          hasKnownCostBasis = false;
+        } else {
+          costBasisEUR += amountEUR;
+        }
+        break;
+      }
+      case 'SELL':
+      case 'TRANSFER_OUT': {
+        if (qty <= 1e-12 || costBasisEUR < 0) {
+          hasKnownCostBasis = false;
+          qty = Math.max(0, qty - quantity);
+          break;
+        }
+        const averageCost = qty > 0 ? costBasisEUR / qty : 0;
+        costBasisEUR = Math.max(0, costBasisEUR - averageCost * quantity);
+        qty = Math.max(0, qty - quantity);
+        break;
+      }
+      case 'FEE': {
+        const feeAmount = fee > 0 ? fee : transaction.price ?? null;
+        const feeEUR = toEurAtDate(feeAmount, transaction.currency, fxSnapshots, transaction.date);
+        if (feeEUR === null) {
+          hasKnownCostBasis = false;
+        } else if (transaction.assetId) {
+          costBasisEUR += feeEUR;
+        }
+        break;
+      }
+      case 'DIVIDEND': {
+        const dividendBase =
+          transaction.price ?? (transaction.qty !== undefined ? transaction.qty : null);
+        const dividendEUR = toEurAtDate(dividendBase, transaction.currency, fxSnapshots, transaction.date);
+        if (dividendEUR !== null) {
+          dividendIncomeEUR += dividendEUR;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (qty <= 1e-12) {
+    return {
+      costBasisEUR: 0,
+      averageCost: null,
+      dividendIncomeEUR,
+      hasKnownCostBasis,
+    };
+  }
+
+  return {
+    costBasisEUR: hasKnownCostBasis ? costBasisEUR : null,
+    averageCost: hasKnownCostBasis ? costBasisEUR / qty : null,
+    dividendIncomeEUR,
+    hasKnownCostBasis,
+  };
 };
 
 /**
@@ -52,19 +187,17 @@ const filterAuthoritativeTransactions = (
 export const computePositionQty = (
   transactions: Transaction[],
   assetId: string,
-  platformId: string
+  platformId: string,
+  accountId?: string,
 ): number => {
   return transactions
     .filter(
       (t) =>
         t.assetId === assetId &&
-        t.platformId === platformId
+        t.platformId === platformId &&
+        (accountId === undefined ? true : t.accountId === accountId)
     )
-    .reduce((sum, t) => {
-      if (t.kind === 'BUY') return sum + (t.qty || 0);
-      if (t.kind === 'SELL') return sum - (t.qty || 0);
-      return sum;
-    }, 0);
+    .reduce((sum, t) => sum + getQuantityDelta(t), 0);
 };
 
 /**
@@ -156,50 +289,85 @@ export const computePortfolioSummary = (
   transactions: Transaction[],
   priceSnapshots: PriceSnapshot[],
   fxSnapshots: FxSnapshot[],
-  platforms: Platform[]
+  platforms: Platform[],
+  accounts: Account[] = [],
 ): PortfolioSummary => {
   const authoritativeTransactions = filterAuthoritativeTransactions(transactions);
   const positions: Position[] = [];
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
+  const accountMap = new Map(accounts.map((account) => [account.id, account]));
   
-  // Group transactions by asset+platform
-  const assetPlatformMap = new Map<string, { assetId: string; platformId: string }>();
+  // Group transactions by asset+platform+account
+  const assetPlatformMap = new Map<string, { assetId: string; platformId: string; accountId?: string }>();
   
   for (const tx of authoritativeTransactions) {
     if (!tx.assetId) continue;
-    const key = `${tx.assetId}:${tx.platformId}`;
+    const key = buildPairKey(tx.assetId, tx.platformId, tx.accountId);
     if (!assetPlatformMap.has(key)) {
-      assetPlatformMap.set(key, { assetId: tx.assetId, platformId: tx.platformId });
+      assetPlatformMap.set(key, {
+        assetId: tx.assetId,
+        platformId: tx.platformId,
+        accountId: tx.accountId,
+      });
     }
   }
   
   // Compute position for each asset+platform combination
-  for (const [, { assetId, platformId }] of assetPlatformMap) {
+  for (const [, { assetId, platformId, accountId }] of assetPlatformMap) {
     const asset = assetMap.get(assetId);
     const platform = platforms.find((p) => p.id === platformId);
+    const account = accountId ? accountMap.get(accountId) : undefined;
     
     if (!asset || !platform) continue;
     
-    const qty = computePositionQty(authoritativeTransactions, assetId, platformId);
+    const pairTransactions = authoritativeTransactions.filter(
+      (transaction) =>
+        transaction.assetId === assetId &&
+        transaction.platformId === platformId &&
+        transaction.accountId === accountId,
+    );
+    const qty = computePositionQty(authoritativeTransactions, assetId, platformId, accountId);
+    if (Math.abs(qty) <= 1e-12 && pairTransactions.every((transaction) => transaction.kind !== 'DIVIDEND')) {
+      continue;
+    }
     const latestPriceData = getLatestPrice(priceSnapshots, assetId);
     const fxRate = getLatestFxRate(fxSnapshots, asset.currency);
+    const costState = computePositionCostState(pairTransactions, fxSnapshots);
     
     const valueEUR = computeValueEUR(
       qty,
       latestPriceData?.price ?? null,
       fxRate
     );
+    const unrealizedPnlEUR =
+      valueEUR !== null && costState.costBasisEUR !== null
+        ? valueEUR - costState.costBasisEUR
+        : null;
+    const unrealizedPnlPct =
+      unrealizedPnlEUR !== null &&
+      costState.costBasisEUR !== null &&
+      costState.costBasisEUR > 1e-12
+        ? unrealizedPnlEUR / costState.costBasisEUR
+        : null;
     
     positions.push({
       assetId,
       platformId,
+      accountId,
       asset,
       platform,
+      account,
       qty,
       latestPrice: latestPriceData?.price ?? null,
       latestPriceDate: latestPriceData?.date ?? null,
       currency: asset.currency,
       fxRate,
+      costBasisEUR: costState.costBasisEUR,
+      averageCost: costState.averageCost,
+      unrealizedPnlEUR,
+      unrealizedPnlPct,
+      dividendIncomeEUR: costState.dividendIncomeEUR,
+      hasKnownCostBasis: costState.hasKnownCostBasis,
       valueEUR,
     });
   }
@@ -223,6 +391,51 @@ export const computePortfolioSummary = (
     }
     if (entry.valueEUR === null) continue;
     entry.valueEUR += position.valueEUR;
+  }
+
+  const byAccountMap = new Map<
+    string,
+    {
+      accountId: string | null;
+      platformId: string;
+      name: string;
+      valueEUR: number | null;
+      costBasisEUR: number | null;
+      unrealizedPnlEUR: number | null;
+    }
+  >();
+
+  for (const position of positions) {
+    const key = `${position.platformId}:${position.accountId ?? '__none__'}`;
+    const defaultName = position.account?.name ?? `${position.platform.name} / Unassigned`;
+    if (!byAccountMap.has(key)) {
+      byAccountMap.set(key, {
+        accountId: position.accountId ?? null,
+        platformId: position.platformId,
+        name: defaultName,
+        valueEUR: 0,
+        costBasisEUR: 0,
+        unrealizedPnlEUR: 0,
+      });
+    }
+    const entry = byAccountMap.get(key)!;
+    if (position.valueEUR === null) {
+      entry.valueEUR = null;
+    } else if (entry.valueEUR !== null) {
+      entry.valueEUR += position.valueEUR;
+    }
+
+    if (position.costBasisEUR === null) {
+      entry.costBasisEUR = null;
+    } else if (entry.costBasisEUR !== null) {
+      entry.costBasisEUR += position.costBasisEUR;
+    }
+
+    if (position.unrealizedPnlEUR === null) {
+      entry.unrealizedPnlEUR = null;
+    } else if (entry.unrealizedPnlEUR !== null) {
+      entry.unrealizedPnlEUR += position.unrealizedPnlEUR;
+    }
   }
   
   // Aggregate by type
@@ -254,16 +467,40 @@ export const computePortfolioSummary = (
         latestPrice: position.latestPrice,
         latestPriceDate: position.latestPriceDate,
         fxRate: position.fxRate,
+        costBasisEUR: position.costBasisEUR,
+        averageCost: position.averageCost,
+        unrealizedPnlEUR: position.unrealizedPnlEUR,
+        unrealizedPnlPct: position.unrealizedPnlPct,
+        dividendIncomeEUR: position.dividendIncomeEUR,
+        hasKnownCostBasis: position.hasKnownCostBasis,
         valueEUR: position.valueEUR,
       });
       continue;
     }
 
     existing.qty += position.qty;
+    existing.dividendIncomeEUR += position.dividendIncomeEUR;
     if (existing.valueEUR === null || position.valueEUR === null) {
       existing.valueEUR = null;
     } else {
       existing.valueEUR += position.valueEUR;
+    }
+    if (existing.costBasisEUR === null || position.costBasisEUR === null) {
+      existing.costBasisEUR = null;
+      existing.averageCost = null;
+      existing.unrealizedPnlEUR = null;
+      existing.unrealizedPnlPct = null;
+      existing.hasKnownCostBasis = false;
+    } else {
+      existing.costBasisEUR += position.costBasisEUR;
+      existing.averageCost = Math.abs(existing.qty) > 1e-12 ? existing.costBasisEUR / existing.qty : null;
+      existing.unrealizedPnlEUR =
+        existing.valueEUR !== null ? existing.valueEUR - existing.costBasisEUR : null;
+      existing.unrealizedPnlPct =
+        existing.unrealizedPnlEUR !== null && existing.costBasisEUR > 1e-12
+          ? existing.unrealizedPnlEUR / existing.costBasisEUR
+          : null;
+      existing.hasKnownCostBasis = existing.hasKnownCostBasis && position.hasKnownCostBasis;
     }
   }
 
@@ -298,9 +535,7 @@ export const computePortfolioSummary = (
       const assetId = tx.assetId!;
       const previousQty = qtyByAsset.get(assetId) ?? 0;
       const delta =
-        tx.kind === 'BUY' ? (tx.qty ?? 0) :
-        tx.kind === 'SELL' ? -(tx.qty ?? 0) :
-        0;
+        getQuantityDelta(tx);
       qtyByAsset.set(assetId, previousQty + delta);
       txIndex++;
     }
@@ -339,13 +574,57 @@ export const computePortfolioSummary = (
   const totalValueEUR = positions.some((p) => p.valueEUR === null)
     ? null
     : positions.reduce((sum, p) => sum + (p.valueEUR ?? 0), 0);
+  const totalCostBasisEUR = positions.some((p) => p.costBasisEUR === null)
+    ? null
+    : positions.reduce((sum, p) => sum + (p.costBasisEUR ?? 0), 0);
+  const totalUnrealizedPnlEUR =
+    totalValueEUR !== null && totalCostBasisEUR !== null
+      ? totalValueEUR - totalCostBasisEUR
+      : null;
+  const totalUnrealizedPnlPct =
+    totalUnrealizedPnlEUR !== null &&
+    totalCostBasisEUR !== null &&
+    totalCostBasisEUR > 1e-12
+      ? totalUnrealizedPnlEUR / totalCostBasisEUR
+      : null;
+  const totalDividendIncomeEUR = positions.reduce(
+    (sum, position) => sum + position.dividendIncomeEUR,
+    0,
+  );
+  const tickerWithPnl = byTicker.filter((holding) => holding.unrealizedPnlPct !== null);
+  const bestPerformer =
+    tickerWithPnl.length > 0
+      ? [...tickerWithPnl].sort(
+          (left, right) => (right.unrealizedPnlPct ?? -Infinity) - (left.unrealizedPnlPct ?? -Infinity),
+        )[0] ?? null
+      : null;
+  const worstPerformer =
+    tickerWithPnl.length > 0
+      ? [...tickerWithPnl].sort(
+          (left, right) => (left.unrealizedPnlPct ?? Infinity) - (right.unrealizedPnlPct ?? Infinity),
+        )[0] ?? null
+      : null;
   
   return {
     positions,
     byTicker,
     history,
     totalValueEUR,
+    totalCostBasisEUR,
+    totalUnrealizedPnlEUR,
+    totalUnrealizedPnlPct,
+    totalDividendIncomeEUR,
+    bestPerformer,
+    worstPerformer,
+    byAccount: Array.from(byAccountMap.values()),
     byPlatform: Array.from(byPlatformMap.values()),
     byType: Array.from(byTypeMap.values()),
+    dataQuality: {
+      missingPriceCount: positions.filter((position) => position.latestPrice === null).length,
+      missingFxCount: positions.filter(
+        (position) => position.latestPrice !== null && position.fxRate === null,
+      ).length,
+      missingCostBasisCount: positions.filter((position) => !position.hasKnownCostBasis).length,
+    },
   };
 };

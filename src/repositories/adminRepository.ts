@@ -1,7 +1,12 @@
 import { db } from '../db';
 import {
+  Account,
   Asset,
   FxSnapshot,
+  ImportJob,
+  ImportRow,
+  ImportMode,
+  ImportSourceProfile,
   Platform,
   PositionSnapshot,
   PriceSnapshot,
@@ -22,12 +27,33 @@ import {
 
 const withTables = [
   db.platforms,
+  db.accounts,
   db.assets,
   db.transactions,
   db.priceSnapshots,
   db.fxSnapshots,
+  db.importJobs,
+  db.importRows,
   db.positionSnapshots,
 ];
+
+const DEFAULT_IMPORT_CHECKSUM_VERSION = 'fnv1a-v1';
+const DEFAULT_ACCOUNT_TYPE_BY_SOURCE: Record<ImportSourceProfile, Account['type']> = {
+  broker_export: 'BROKERAGE',
+  crypto_exchange: 'EXCHANGE',
+  wallet_export: 'WALLET',
+  monthly_statement: 'BROKERAGE',
+  custom: 'OTHER',
+};
+
+interface ImportExecutionOptions {
+  fileName: string;
+  fileSize: number;
+  fileLastModified: number;
+  fileFingerprint: string;
+  sourceProfile: ImportSourceProfile;
+  targetAccountName?: string;
+}
 
 const createId = (prefix: string) => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -39,6 +65,103 @@ const createId = (prefix: string) => {
 const normalizeKey = (value: string | undefined | null) =>
   String(value ?? '').trim().toLowerCase();
 
+const defaultAccountNameForPlatform = (platformName: string) => `${platformName.trim()} Main`;
+
+const buildImportRowId = (importJobId: string, rowNumber: number) =>
+  `import_row_${importJobId}_${rowNumber}`;
+
+const buildTransactionFingerprint = (row: NormalizedTransactionRow) =>
+  [
+    row.date,
+    row.platform,
+    row.kind,
+    row.assetSymbol ?? '',
+    row.qty ?? '',
+    row.price ?? '',
+    row.currency,
+    row.cashCurrency ?? '',
+    row.note ?? '',
+  ].join('|');
+
+const buildSnapshotFingerprint = (row: NormalizedPositionSnapshotRow) =>
+  [
+    row.date,
+    row.platform,
+    row.assetSymbol,
+    row.qty,
+    row.price ?? '',
+    row.currency,
+    row.note ?? '',
+  ].join('|');
+
+const buildImportJob = (args: {
+  id: string;
+  mode: ImportMode;
+  status: ImportJob['status'];
+  options: ImportExecutionOptions;
+  rowCount: number;
+  parsedRowCount: number;
+  errorCount: number;
+  duplicateRowCount: number;
+  summary: string;
+  importedAt: number;
+  platformId?: string;
+  accountId?: string;
+}): ImportJob => ({
+  id: args.id,
+  mode: args.mode,
+  sourceProfile: args.options.sourceProfile,
+  status: args.status,
+  platformId: args.platformId,
+  accountId: args.accountId,
+  fileName: args.options.fileName,
+  fileSize: args.options.fileSize,
+  fileLastModified: args.options.fileLastModified,
+  fileFingerprint: args.options.fileFingerprint,
+  checksumVersion: DEFAULT_IMPORT_CHECKSUM_VERSION,
+  rowCount: args.rowCount,
+  parsedRowCount: args.parsedRowCount,
+  errorCount: args.errorCount,
+  duplicateRowCount: args.duplicateRowCount,
+  summary: args.summary,
+  importedAt: args.importedAt,
+  createdAt: args.importedAt,
+});
+
+const upsertAccount = async (args: {
+  existingAccounts: Account[];
+  accountMap: Map<string, Account>;
+  platformId: string;
+  platformName: string;
+  sourceProfile: ImportSourceProfile;
+  targetAccountName?: string;
+  timestamp: number;
+}): Promise<{ account: Account; created?: Account }> => {
+  const accountName = (args.targetAccountName?.trim() || defaultAccountNameForPlatform(args.platformName)).trim();
+  const accountKey = `${args.platformId}:${normalizeKey(accountName)}`;
+  const existing = args.accountMap.get(accountKey) ?? args.existingAccounts.find(
+    (account) =>
+      account.platformId === args.platformId && normalizeKey(account.name) === normalizeKey(accountName),
+  );
+
+  if (existing) {
+    args.accountMap.set(accountKey, existing);
+    return { account: existing };
+  }
+
+  const account: Account = {
+    id: createId('account'),
+    platformId: args.platformId,
+    name: accountName,
+    type: DEFAULT_ACCOUNT_TYPE_BY_SOURCE[args.sourceProfile],
+    createdAt: args.timestamp,
+  };
+
+  args.accountMap.set(accountKey, account);
+  args.existingAccounts.push(account);
+  return { account, created: account };
+};
+
 export const adminRepository = {
   /**
    * Clear every IndexedDB table inside a single Dexie transaction to avoid
@@ -48,10 +171,13 @@ export const adminRepository = {
     await db.transaction('rw', withTables, async () => {
       await Promise.all([
         db.platforms.clear(),
+        db.accounts.clear(),
         db.assets.clear(),
         db.transactions.clear(),
         db.priceSnapshots.clear(),
         db.fxSnapshots.clear(),
+        db.importJobs.clear(),
+        db.importRows.clear(),
         db.positionSnapshots.clear(),
       ]);
     });
@@ -67,6 +193,11 @@ export const adminRepository = {
     const samplePlatforms: Platform[] = [
       { id: 'platform_1', name: 'DEGIRO', createdAt: timestamp },
       { id: 'platform_2', name: 'Interactive Brokers', createdAt: timestamp },
+    ];
+
+    const sampleAccounts: Account[] = [
+      { id: 'account_1', platformId: 'platform_1', name: 'DEGIRO CTO', type: 'BROKERAGE', createdAt: timestamp },
+      { id: 'account_2', platformId: 'platform_2', name: 'IBKR Crypto', type: 'EXCHANGE', createdAt: timestamp },
     ];
 
     const sampleAssets: Asset[] = [
@@ -100,6 +231,7 @@ export const adminRepository = {
       {
         id: 'tx_1',
         platformId: 'platform_1',
+        accountId: 'account_1',
         assetId: 'asset_1',
         kind: 'BUY',
         date: new Date('2024-01-01').getTime(),
@@ -111,6 +243,7 @@ export const adminRepository = {
       {
         id: 'tx_2',
         platformId: 'platform_1',
+        accountId: 'account_1',
         assetId: 'asset_2',
         kind: 'BUY',
         date: new Date('2024-01-15').getTime(),
@@ -122,6 +255,7 @@ export const adminRepository = {
       {
         id: 'tx_3',
         platformId: 'platform_2',
+        accountId: 'account_2',
         assetId: 'asset_3',
         kind: 'BUY',
         date: new Date('2024-02-01').getTime(),
@@ -171,6 +305,7 @@ export const adminRepository = {
 
     await db.transaction('rw', withTables, async () => {
       await db.platforms.bulkPut(samplePlatforms);
+      await db.accounts.bulkPut(sampleAccounts);
       await db.assets.bulkPut(sampleAssets);
       await db.transactions.bulkPut(sampleTransactions);
       await db.priceSnapshots.bulkPut(samplePrices);
@@ -178,24 +313,86 @@ export const adminRepository = {
     });
   },
 
-  importNormalizedTransactions: async (rows: NormalizedTransactionRow[]) => {
+  importNormalizedTransactions: async (
+    rows: NormalizedTransactionRow[],
+    options?: ImportExecutionOptions,
+  ) => {
     if (rows.length === 0) {
       return {
+        importJobId: null,
         transactionsCreated: 0,
         platformsCreated: 0,
+        accountsCreated: 0,
         assetsCreated: 0,
+        duplicateSkipped: false,
       };
     }
 
     const timestamp = Date.now();
     const platformsCreated: Platform[] = [];
+    const accountsCreated: Account[] = [];
     const assetsCreated: Asset[] = [];
     const transactionsToCreate: Transaction[] = [];
     const priceSnapshots: PriceSnapshot[] = [];
+    const importRows: ImportRow[] = [];
     const priceKeySet = new Set<string>();
+    const rowFingerprintSet = new Set<string>();
+    let importJobId: string | null = null;
+    let duplicateSkipped = false;
 
     await db.transaction('rw', withTables, async () => {
+      if (options) {
+        const existingJob = await db.importJobs
+          .where('fileFingerprint')
+          .equals(options.fileFingerprint)
+          .filter((job) => job.status === 'IMPORTED')
+          .first();
+
+        if (existingJob) {
+          importJobId = createId('import_job');
+          duplicateSkipped = true;
+
+          const duplicateJob = buildImportJob({
+            id: importJobId,
+            mode: 'transactions',
+            status: 'DUPLICATE',
+            options,
+            rowCount: rows.length,
+            parsedRowCount: rows.length,
+            errorCount: 0,
+            duplicateRowCount: rows.length,
+            summary: `Skipped duplicate import. Fingerprint already imported via ${existingJob.id}.`,
+            importedAt: timestamp,
+            platformId: existingJob.platformId,
+            accountId: existingJob.accountId,
+          });
+
+          await db.importJobs.add(duplicateJob);
+          await db.importRows.bulkPut(
+            rows.map((row, index) => ({
+              id: buildImportRowId(importJobId!, index + 1),
+              importJobId: importJobId!,
+              rowNumber: index + 1,
+              fingerprint: buildTransactionFingerprint(row),
+              status: 'SKIPPED_DUPLICATE_IMPORT',
+              date: row.date,
+              platformName: row.platform,
+              accountName: options.targetAccountName,
+              assetSymbol: row.assetSymbol,
+              kind: row.kind,
+              qty: row.qty,
+              currency: row.cashCurrency ?? row.currency,
+              message: 'Skipped because this file fingerprint was already imported.',
+              createdAt: timestamp + index,
+            })),
+          );
+
+          return;
+        }
+      }
+
       const existingPlatforms = await db.platforms.toArray();
+      const existingAccounts = await db.accounts.toArray();
       const existingAssets = await db.assets.toArray();
 
       const platformMap = new Map<string, Platform>();
@@ -203,10 +400,17 @@ export const adminRepository = {
         platformMap.set(normalizeKey(platform.name), platform);
       });
 
+      const accountMap = new Map<string, Account>();
+      existingAccounts.forEach((account) => {
+        accountMap.set(`${account.platformId}:${normalizeKey(account.name)}`, account);
+      });
+
       const assetMap = new Map<string, Asset>();
       existingAssets.forEach((asset) => {
         assetMap.set(asset.symbol.toUpperCase(), asset);
       });
+
+      importJobId = options ? createId('import_job') : null;
 
       for (const row of rows) {
         const platformKey = normalizeKey(row.platform);
@@ -219,6 +423,19 @@ export const adminRepository = {
           };
           platformMap.set(platformKey, platform);
           platformsCreated.push(platform);
+        }
+
+        const { account, created } = await upsertAccount({
+          existingAccounts,
+          accountMap,
+          platformId: platform.id,
+          platformName: platform.name,
+          sourceProfile: options?.sourceProfile ?? 'custom',
+          targetAccountName: options?.targetAccountName,
+          timestamp,
+        });
+        if (created) {
+          accountsCreated.push(created);
         }
 
         let asset: Asset | undefined;
@@ -242,6 +459,7 @@ export const adminRepository = {
         const transaction: Transaction = {
           id: createId('tx'),
           platformId: platform.id,
+          accountId: account.id,
           assetId: asset?.id,
           kind: row.kind,
           date: row.date,
@@ -251,9 +469,33 @@ export const adminRepository = {
           currency: row.cashCurrency ?? row.currency,
           note: row.note ?? undefined,
           source: 'CSV_TRANSACTION',
+          importJobId: importJobId ?? undefined,
+          importRowId: importJobId ? buildImportRowId(importJobId, transactionsToCreate.length + 1) : undefined,
+          fingerprint: buildTransactionFingerprint(row),
           createdAt: timestamp + transactionsToCreate.length,
         };
         transactionsToCreate.push(transaction);
+
+        const rowFingerprint = buildTransactionFingerprint(row);
+        importRows.push({
+          id: transaction.importRowId ?? createId('import_row'),
+          importJobId: importJobId ?? 'legacy_import',
+          rowNumber: importRows.length + 1,
+          fingerprint: rowFingerprint,
+          status: rowFingerprintSet.has(rowFingerprint) ? 'DUPLICATE_IN_FILE' : 'IMPORTED',
+          date: row.date,
+          platformName: row.platform,
+          accountName: account.name,
+          assetSymbol: row.assetSymbol,
+          kind: row.kind,
+          qty: row.qty,
+          currency: row.cashCurrency ?? row.currency,
+          message: rowFingerprintSet.has(rowFingerprint)
+            ? 'Duplicate row inside the same file.'
+            : undefined,
+          createdAt: timestamp + importRows.length,
+        });
+        rowFingerprintSet.add(rowFingerprint);
 
         if (asset && row.price) {
           const priceKey = `${asset.id}:${row.date}`;
@@ -264,6 +506,7 @@ export const adminRepository = {
               date: row.date,
               price: row.price,
               currency: row.currency,
+              importJobId: importJobId ?? undefined,
               createdAt: timestamp + priceSnapshots.length,
             });
             priceKeySet.add(priceKey);
@@ -274,6 +517,9 @@ export const adminRepository = {
       if (platformsCreated.length) {
         await db.platforms.bulkAdd(platformsCreated);
       }
+      if (accountsCreated.length) {
+        await db.accounts.bulkAdd(accountsCreated);
+      }
       if (assetsCreated.length) {
         await db.assets.bulkAdd(assetsCreated);
       }
@@ -283,35 +529,114 @@ export const adminRepository = {
       if (priceSnapshots.length) {
         await db.priceSnapshots.bulkAdd(priceSnapshots);
       }
+      if (options && importJobId) {
+        await db.importJobs.add(
+          buildImportJob({
+            id: importJobId,
+            mode: 'transactions',
+            status: 'IMPORTED',
+            options,
+            rowCount: rows.length,
+            parsedRowCount: rows.length,
+            errorCount: 0,
+            duplicateRowCount: importRows.filter((row) => row.status === 'DUPLICATE_IN_FILE').length,
+            summary: `${transactionsToCreate.length} transaction(s) imported successfully.`,
+            importedAt: timestamp,
+            platformId: transactionsToCreate[0]?.platformId,
+            accountId: transactionsToCreate[0]?.accountId,
+          }),
+        );
+        await db.importRows.bulkPut(importRows);
+      }
     });
 
     return {
+      importJobId,
       transactionsCreated: transactionsToCreate.length,
       platformsCreated: platformsCreated.length,
+      accountsCreated: accountsCreated.length,
       assetsCreated: assetsCreated.length,
+      duplicateSkipped,
     };
   },
 
-  importMonthlyPositionSnapshots: async (rows: NormalizedPositionSnapshotRow[]) => {
+  importMonthlyPositionSnapshots: async (
+    rows: NormalizedPositionSnapshotRow[],
+    options?: ImportExecutionOptions,
+  ) => {
     if (rows.length === 0) {
       return {
+        importJobId: null,
         snapshotsUpserted: 0,
         implicitClosures: 0,
         syntheticTransactionsRebuilt: 0,
         platformsCreated: 0,
+        accountsCreated: 0,
         assetsCreated: 0,
+        duplicateSkipped: false,
       };
     }
 
     const timestamp = Date.now();
     const platformsCreated: Platform[] = [];
+    const accountsCreated: Account[] = [];
     const assetsCreated: Asset[] = [];
     let importedSnapshotCount = 0;
     let implicitClosureCount = 0;
     let syntheticTransactionCount = 0;
+    let importJobId: string | null = null;
+    let duplicateSkipped = false;
 
     await db.transaction('rw', withTables, async () => {
+      if (options) {
+        const existingJob = await db.importJobs
+          .where('fileFingerprint')
+          .equals(options.fileFingerprint)
+          .filter((job) => job.status === 'IMPORTED')
+          .first();
+
+        if (existingJob) {
+          importJobId = createId('import_job');
+          duplicateSkipped = true;
+          await db.importJobs.add(
+            buildImportJob({
+              id: importJobId,
+              mode: 'monthly_positions',
+              status: 'DUPLICATE',
+              options,
+              rowCount: rows.length,
+              parsedRowCount: rows.length,
+              errorCount: 0,
+              duplicateRowCount: rows.length,
+              summary: `Skipped duplicate snapshot import. Fingerprint already imported via ${existingJob.id}.`,
+              importedAt: timestamp,
+              platformId: existingJob.platformId,
+              accountId: existingJob.accountId,
+            }),
+          );
+          await db.importRows.bulkPut(
+            rows.map((row, index) => ({
+              id: buildImportRowId(importJobId!, index + 1),
+              importJobId: importJobId!,
+              rowNumber: index + 1,
+              fingerprint: buildSnapshotFingerprint(row),
+              status: 'SKIPPED_DUPLICATE_IMPORT',
+              date: row.date,
+              platformName: row.platform,
+              accountName: options.targetAccountName,
+              assetSymbol: row.assetSymbol,
+              qty: row.qty,
+              currency: row.currency,
+              message: 'Skipped because this file fingerprint was already imported.',
+              createdAt: timestamp + index,
+            })),
+          );
+          return;
+        }
+      }
+
       const existingPlatforms = await db.platforms.toArray();
+      const existingAccounts = await db.accounts.toArray();
       const existingAssets = await db.assets.toArray();
       const existingSnapshots = await db.positionSnapshots.toArray();
       const existingTransactions = await db.transactions.toArray();
@@ -321,51 +646,73 @@ export const adminRepository = {
         platformMap.set(normalizeKey(platform.name), platform);
       });
 
+      const accountMap = new Map<string, Account>();
+      existingAccounts.forEach((account) => {
+        accountMap.set(`${account.platformId}:${normalizeKey(account.name)}`, account);
+      });
+
       const assetMap = new Map<string, Asset>();
       existingAssets.forEach((asset) => {
         assetMap.set(asset.symbol.toUpperCase(), asset);
       });
 
-      const importedSnapshotInputs = collapsePositionSnapshotInputs(
-        rows.map((row) => {
-          const platformKey = normalizeKey(row.platform);
-          let platform = platformMap.get(platformKey);
-          if (!platform) {
-            platform = {
-              id: createId('platform'),
-              name: row.platform.trim(),
-              createdAt: timestamp,
-            };
-            platformMap.set(platformKey, platform);
-            platformsCreated.push(platform);
-          }
+      importJobId = options ? createId('import_job') : null;
 
-          const symbol = row.assetSymbol.toUpperCase();
-          let asset = assetMap.get(symbol);
-          if (!asset) {
-            asset = {
-              id: createId('asset'),
-              type: row.assetType ?? 'STOCK',
-              symbol,
-              name: row.assetName || row.assetSymbol,
-              currency: row.currency,
-              createdAt: timestamp,
-            };
-            assetMap.set(symbol, asset);
-            assetsCreated.push(asset);
-          }
-
-          return {
-            platformId: platform.id,
-            assetId: asset.id,
-            date: row.date,
-            qty: row.qty,
-            price: row.price,
-            currency: row.currency,
-            note: row.note,
+      const snapshotInputs = [];
+      for (const row of rows) {
+        const platformKey = normalizeKey(row.platform);
+        let platform = platformMap.get(platformKey);
+        if (!platform) {
+          platform = {
+            id: createId('platform'),
+            name: row.platform.trim(),
+            createdAt: timestamp,
           };
-        }),
-      );
+          platformMap.set(platformKey, platform);
+          platformsCreated.push(platform);
+        }
+
+        const { account, created } = await upsertAccount({
+          existingAccounts,
+          accountMap,
+          platformId: platform.id,
+          platformName: platform.name,
+          sourceProfile: options?.sourceProfile ?? 'monthly_statement',
+          targetAccountName: options?.targetAccountName,
+          timestamp,
+        });
+        if (created) {
+          accountsCreated.push(created);
+        }
+
+        const symbol = row.assetSymbol.toUpperCase();
+        let asset = assetMap.get(symbol);
+        if (!asset) {
+          asset = {
+            id: createId('asset'),
+            type: row.assetType ?? 'STOCK',
+            symbol,
+            name: row.assetName || row.assetSymbol,
+            currency: row.currency,
+            createdAt: timestamp,
+          };
+          assetMap.set(symbol, asset);
+          assetsCreated.push(asset);
+        }
+
+        snapshotInputs.push({
+          platformId: platform.id,
+          accountId: account.id,
+          assetId: asset.id,
+          date: row.date,
+          qty: row.qty,
+          price: row.price,
+          currency: row.currency,
+          note: row.note,
+        });
+      }
+
+      const importedSnapshotInputs = collapsePositionSnapshotInputs(snapshotInputs);
 
       const implicitZeroInputs = buildImplicitZeroPositionSnapshots(
         existingSnapshots,
@@ -390,14 +737,17 @@ export const adminRepository = {
           snapshot.platformId,
           snapshot.assetId,
           snapshot.date,
+          snapshot.accountId,
         ),
         platformId: snapshot.platformId,
+        accountId: snapshot.accountId,
         assetId: snapshot.assetId,
         date: snapshot.date,
         qty: snapshot.qty,
         price: snapshot.price,
         currency: snapshot.currency,
         note: snapshot.note,
+        importJobId: importJobId ?? undefined,
         createdAt: timestamp + index,
       }));
 
@@ -435,6 +785,7 @@ export const adminRepository = {
             date: snapshot.date,
             price: snapshot.price!,
             currency: snapshot.currency,
+            importJobId: importJobId ?? undefined,
             createdAt: timestamp + index,
           });
         });
@@ -442,6 +793,9 @@ export const adminRepository = {
 
       if (platformsCreated.length) {
         await db.platforms.bulkAdd(platformsCreated);
+      }
+      if (accountsCreated.length) {
+        await db.accounts.bulkAdd(accountsCreated);
       }
       if (assetsCreated.length) {
         await db.assets.bulkAdd(assetsCreated);
@@ -461,14 +815,51 @@ export const adminRepository = {
       if (syntheticTransactions.length) {
         await db.transactions.bulkPut(syntheticTransactions);
       }
+      if (options && importJobId) {
+        await db.importJobs.add(
+          buildImportJob({
+            id: importJobId,
+            mode: 'monthly_positions',
+            status: 'IMPORTED',
+            options,
+            rowCount: rows.length,
+            parsedRowCount: rows.length,
+            errorCount: 0,
+            duplicateRowCount: 0,
+            summary: `${importedSnapshotCount} snapshot(s) imported and ${syntheticTransactionCount} synthetic transaction(s) rebuilt.`,
+            importedAt: timestamp,
+            platformId: snapshotsToUpsert[0]?.platformId,
+            accountId: snapshotsToUpsert[0]?.accountId,
+          }),
+        );
+        await db.importRows.bulkPut(
+          rows.map((row, index) => ({
+            id: buildImportRowId(importJobId!, index + 1),
+            importJobId: importJobId!,
+            rowNumber: index + 1,
+            fingerprint: buildSnapshotFingerprint(row),
+            status: 'IMPORTED',
+            date: row.date,
+            platformName: row.platform,
+            accountName: options.targetAccountName,
+            assetSymbol: row.assetSymbol,
+            qty: row.qty,
+            currency: row.currency,
+            createdAt: timestamp + index,
+          })),
+        );
+      }
     });
 
     return {
+      importJobId,
       snapshotsUpserted: importedSnapshotCount,
       implicitClosures: implicitClosureCount,
       syntheticTransactionsRebuilt: syntheticTransactionCount,
       platformsCreated: platformsCreated.length,
+      accountsCreated: accountsCreated.length,
       assetsCreated: assetsCreated.length,
+      duplicateSkipped,
     };
   },
 };

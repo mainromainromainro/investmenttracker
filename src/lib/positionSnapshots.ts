@@ -2,6 +2,7 @@ import { PositionSnapshot, Transaction } from '../types';
 
 export interface PositionSnapshotInput {
   platformId: string;
+  accountId?: string;
   assetId: string;
   date: number;
   qty: number;
@@ -16,7 +17,13 @@ export const POSITION_SNAPSHOT_ID_PREFIX = '__position_snapshot__';
 export const POSITION_SNAPSHOT_TRANSACTION_ID_PREFIX = '__position_snapshot_tx__';
 export const POSITION_SNAPSHOT_PRICE_ID_PREFIX = '__position_snapshot_price__';
 
-const buildPairKey = (platformId: string, assetId: string) => `${platformId}:${assetId}`;
+const getScopeAccountId = (accountId?: string) => accountId ?? '__platform__';
+
+const buildScopeKey = (platformId: string, accountId?: string) =>
+  `${platformId}:${getScopeAccountId(accountId)}`;
+
+const buildPairKey = (platformId: string, assetId: string, accountId?: string) =>
+  `${buildScopeKey(platformId, accountId)}:${assetId}`;
 
 const normalizeQty = (value: number) => {
   if (Math.abs(value) <= POSITION_EPSILON) {
@@ -37,13 +44,16 @@ export const buildPositionSnapshotId = (
   platformId: string,
   assetId: string,
   date: number,
-) => `${POSITION_SNAPSHOT_ID_PREFIX}:${platformId}:${assetId}:${date}`;
+  accountId?: string,
+) => `${POSITION_SNAPSHOT_ID_PREFIX}:${platformId}:${getScopeAccountId(accountId)}:${assetId}:${date}`;
 
 export const buildPositionSnapshotTransactionId = (
   platformId: string,
   assetId: string,
   date: number,
-) => `${POSITION_SNAPSHOT_TRANSACTION_ID_PREFIX}:${platformId}:${assetId}:${date}`;
+  accountId?: string,
+) =>
+  `${POSITION_SNAPSHOT_TRANSACTION_ID_PREFIX}:${platformId}:${getScopeAccountId(accountId)}:${assetId}:${date}`;
 
 export const buildPositionSnapshotPriceId = (
   assetId: string,
@@ -62,7 +72,12 @@ export const collapsePositionSnapshotInputs = (
   const merged = new Map<string, PositionSnapshotInput>();
 
   for (const input of inputs) {
-    const key = buildPositionSnapshotId(input.platformId, input.assetId, input.date);
+    const key = buildPositionSnapshotId(
+      input.platformId,
+      input.assetId,
+      input.date,
+      input.accountId,
+    );
     const normalizedQty = normalizeQty(input.qty);
     const existing = merged.get(key);
 
@@ -94,6 +109,7 @@ export const collapsePositionSnapshotInputs = (
 
     merged.set(key, {
       ...existing,
+      accountId: input.accountId ?? existing.accountId,
       qty: nextQty,
       price: nextPrice,
       currency: input.currency || existing.currency,
@@ -104,6 +120,9 @@ export const collapsePositionSnapshotInputs = (
   return Array.from(merged.values()).sort((a, b) => {
     if (a.platformId !== b.platformId) {
       return a.platformId.localeCompare(b.platformId);
+    }
+    if ((a.accountId ?? '') !== (b.accountId ?? '')) {
+      return (a.accountId ?? '').localeCompare(b.accountId ?? '');
     }
     if (a.date !== b.date) {
       return a.date - b.date;
@@ -120,7 +139,7 @@ export const buildImplicitZeroPositionSnapshots = (
   const groupedImports = new Map<string, PositionSnapshotInput[]>();
 
   for (const snapshot of collapsedImports) {
-    const key = `${snapshot.platformId}:${snapshot.date}`;
+    const key = `${buildScopeKey(snapshot.platformId, snapshot.accountId)}:${snapshot.date}`;
     const group = groupedImports.get(key);
     if (group) {
       group.push(snapshot);
@@ -133,6 +152,7 @@ export const buildImplicitZeroPositionSnapshots = (
   for (const snapshot of existingSnapshots) {
     const normalized: PositionSnapshotInput = {
       platformId: snapshot.platformId,
+      accountId: snapshot.accountId,
       assetId: snapshot.assetId,
       date: snapshot.date,
       qty: normalizeQty(snapshot.qty),
@@ -140,11 +160,12 @@ export const buildImplicitZeroPositionSnapshots = (
       currency: snapshot.currency,
       note: snapshot.note,
     };
-    const list = existingByPlatform.get(normalized.platformId);
+    const scopeKey = buildScopeKey(normalized.platformId, normalized.accountId);
+    const list = existingByPlatform.get(scopeKey);
     if (list) {
       list.push(normalized);
     } else {
-      existingByPlatform.set(normalized.platformId, [normalized]);
+      existingByPlatform.set(scopeKey, [normalized]);
     }
   }
 
@@ -173,21 +194,26 @@ export const buildImplicitZeroPositionSnapshots = (
     if (firstA.platformId !== firstB.platformId) {
       return firstA.platformId.localeCompare(firstB.platformId);
     }
+    if ((firstA.accountId ?? '') !== (firstB.accountId ?? '')) {
+      return (firstA.accountId ?? '').localeCompare(firstB.accountId ?? '');
+    }
     return firstA.date - firstB.date;
   });
 
   for (const group of importGroups) {
     const platformId = group[0]!.platformId;
+    const accountId = group[0]!.accountId;
     const date = group[0]!.date;
+    const scopeKey = buildScopeKey(platformId, accountId);
 
-    let state = platformState.get(platformId);
+    let state = platformState.get(scopeKey);
     if (!state) {
       state = {
         cursor: 0,
-        existing: existingByPlatform.get(platformId) ?? [],
+        existing: existingByPlatform.get(scopeKey) ?? [],
         latestByAsset: new Map<string, PositionSnapshotInput>(),
       };
-      platformState.set(platformId, state);
+      platformState.set(scopeKey, state);
     }
 
     while (
@@ -215,6 +241,7 @@ export const buildImplicitZeroPositionSnapshots = (
 
       zerosForGroup.push({
         platformId,
+        accountId,
         assetId: latest.assetId,
         date,
         qty: 0,
@@ -243,6 +270,9 @@ const sortSnapshotsForReconciliation = (
     if (a.platformId !== b.platformId) {
       return a.platformId.localeCompare(b.platformId);
     }
+    if ((a.accountId ?? '') !== (b.accountId ?? '')) {
+      return (a.accountId ?? '').localeCompare(b.accountId ?? '');
+    }
     if (a.assetId !== b.assetId) {
       return a.assetId.localeCompare(b.assetId);
     }
@@ -259,7 +289,7 @@ export const buildSyntheticTransactionsFromPositionSnapshots = (
   const previousQtyByPair = new Map<string, number>();
 
   for (const snapshot of sortSnapshotsForReconciliation(snapshots)) {
-    const pairKey = buildPairKey(snapshot.platformId, snapshot.assetId);
+    const pairKey = buildPairKey(snapshot.platformId, snapshot.assetId, snapshot.accountId);
     const previousQty = previousQtyByPair.get(pairKey) ?? 0;
     const currentQty = normalizeQty(snapshot.qty);
     const delta = normalizeQty(currentQty - previousQty);
@@ -271,8 +301,10 @@ export const buildSyntheticTransactionsFromPositionSnapshots = (
           snapshot.platformId,
           snapshot.assetId,
           snapshot.date,
+          snapshot.accountId,
         ),
         platformId: snapshot.platformId,
+        accountId: snapshot.accountId,
         assetId: snapshot.assetId,
         kind: delta > 0 ? 'BUY' : 'SELL',
         date: snapshot.date,

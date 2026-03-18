@@ -14,6 +14,10 @@ export const transactionRepository = {
     return db.transactions.where('platformId').equals(platformId).toArray();
   },
 
+  async getByAccountId(accountId: string) {
+    return db.transactions.where('accountId').equals(accountId).toArray();
+  },
+
   async getByAssetId(assetId: string) {
     return db.transactions.where('assetId').equals(assetId).toArray();
   },

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom';
 import './App.css';
 import Dashboard from './features/dashboard/Dashboard';
 import AssetsList from './features/assets/AssetsList';
+import AccountsList from './features/accounts/AccountsList';
 import PlatformsList from './features/platforms/PlatformsList';
 import TransactionsList from './features/transactions/TransactionsList';
 import PricesList from './features/prices/PricesList';
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/assets', label: 'Assets' },
   { to: '/platforms', label: 'Platforms' },
+  { to: '/accounts', label: 'Accounts' },
   { to: '/transactions', label: 'Transactions' },
   { to: '/prices', label: 'Prices' },
   { to: '/fx', label: 'FX' },
@@ -68,6 +70,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/assets" element={<AssetsList />} />
             <Route path="/platforms" element={<PlatformsList />} />
+            <Route path="/accounts" element={<AccountsList />} />
             <Route path="/transactions" element={<TransactionsList />} />
             <Route path="/prices" element={<PricesList />} />
             <Route path="/fx" element={<FxList />} />
