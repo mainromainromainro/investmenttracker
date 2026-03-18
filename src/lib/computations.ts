@@ -10,6 +10,41 @@ import {
   TickerHolding,
 } from '../types';
 
+const buildPairKey = (assetId: string, platformId: string) => `${assetId}:${platformId}`;
+
+const buildSnapshotManagedPairSet = (transactions: Transaction[]): Set<string> => {
+  const pairs = new Set<string>();
+  for (const transaction of transactions) {
+    if (
+      transaction.assetId &&
+      transaction.source === 'POSITION_SNAPSHOT'
+    ) {
+      pairs.add(buildPairKey(transaction.assetId, transaction.platformId));
+    }
+  }
+  return pairs;
+};
+
+const filterAuthoritativeTransactions = (
+  transactions: Transaction[],
+): Transaction[] => {
+  const snapshotManagedPairs = buildSnapshotManagedPairSet(transactions);
+  if (snapshotManagedPairs.size === 0) {
+    return transactions;
+  }
+
+  return transactions.filter((transaction) => {
+    if (!transaction.assetId) {
+      return true;
+    }
+    const pairKey = buildPairKey(transaction.assetId, transaction.platformId);
+    if (!snapshotManagedPairs.has(pairKey)) {
+      return transaction.source !== 'POSITION_SNAPSHOT';
+    }
+    return transaction.source === 'POSITION_SNAPSHOT';
+  });
+};
+
 /**
  * Compute position quantity for an asset on a platform
  * qty = sum(BUY.qty) - sum(SELL.qty)
@@ -123,13 +158,14 @@ export const computePortfolioSummary = (
   fxSnapshots: FxSnapshot[],
   platforms: Platform[]
 ): PortfolioSummary => {
+  const authoritativeTransactions = filterAuthoritativeTransactions(transactions);
   const positions: Position[] = [];
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   
   // Group transactions by asset+platform
   const assetPlatformMap = new Map<string, { assetId: string; platformId: string }>();
   
-  for (const tx of transactions) {
+  for (const tx of authoritativeTransactions) {
     if (!tx.assetId) continue;
     const key = `${tx.assetId}:${tx.platformId}`;
     if (!assetPlatformMap.has(key)) {
@@ -144,7 +180,7 @@ export const computePortfolioSummary = (
     
     if (!asset || !platform) continue;
     
-    const qty = computePositionQty(transactions, assetId, platformId);
+    const qty = computePositionQty(authoritativeTransactions, assetId, platformId);
     const latestPriceData = getLatestPrice(priceSnapshots, assetId);
     const fxRate = getLatestFxRate(fxSnapshots, asset.currency);
     
@@ -243,7 +279,7 @@ export const computePortfolioSummary = (
     });
 
   // Build portfolio evolution over time from transactional and market dates.
-  const datedTransactions = transactions
+  const datedTransactions = authoritativeTransactions
     .filter((tx) => tx.assetId && (tx.kind === 'BUY' || tx.kind === 'SELL'))
     .sort((a, b) => a.date - b.date);
   const timelineSet = new Set<number>();

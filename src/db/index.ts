@@ -5,6 +5,7 @@ import {
   Transaction,
   PriceSnapshot,
   FxSnapshot,
+  PositionSnapshot,
 } from '../types';
 
 export class InvestmentTrackerDB extends Dexie {
@@ -13,6 +14,7 @@ export class InvestmentTrackerDB extends Dexie {
   transactions!: Table<Transaction>;
   priceSnapshots!: Table<PriceSnapshot>;
   fxSnapshots!: Table<FxSnapshot>;
+  positionSnapshots!: Table<PositionSnapshot>;
 
   constructor() {
     super('InvestmentTrackerDB');
@@ -22,6 +24,14 @@ export class InvestmentTrackerDB extends Dexie {
       transactions: 'id, platformId, assetId, date',
       priceSnapshots: 'id, assetId, date',
       fxSnapshots: 'id, pair, date',
+    });
+    this.version(2).stores({
+      platforms: 'id',
+      assets: 'id',
+      transactions: 'id, platformId, assetId, date',
+      priceSnapshots: 'id, assetId, date',
+      fxSnapshots: 'id, pair, date',
+      positionSnapshots: 'id, platformId, assetId, date',
     });
   }
 }

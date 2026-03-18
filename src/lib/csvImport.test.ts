@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  NORMALIZED_POSITION_SNAPSHOT_HEADERS,
   NORMALIZED_TRANSACTION_HEADERS,
+  parseNormalizedPositionSnapshotsCsv,
   parseNormalizedTransactionsCsv,
   suggestCsvColumnMapping,
 } from './csvImport';
@@ -201,5 +203,53 @@ describe('parseNormalizedTransactionsCsv', () => {
 
     expect(result.records).toHaveLength(0);
     expect(result.errors[0]?.message).toContain('broker');
+  });
+});
+
+describe('parseNormalizedPositionSnapshotsCsv', () => {
+  it('parses a valid monthly position snapshot row', () => {
+    const header = NORMALIZED_POSITION_SNAPSHOT_HEADERS.join(',');
+    const csv = buildCsv([
+      header,
+      '2025-02-28,DEGIRO,VWCE,Vanguard FTSE All-World,ETF,12,134.52,EUR,Monthly statement',
+    ]);
+
+    const result = parseNormalizedPositionSnapshotsCsv(csv);
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+
+    const [record] = result.records;
+    expect(record?.platform).toBe('DEGIRO');
+    expect(record?.assetSymbol).toBe('VWCE');
+    expect(record?.qty).toBe(12);
+    expect(record?.price).toBeCloseTo(134.52);
+    expect(record?.currency).toBe('EUR');
+  });
+
+  it('accepts snapshots without price and with default platform', () => {
+    const csv = buildCsv([
+      'date,asset_symbol,qty,currency',
+      '2025-03-31,MSFT,5,USD',
+    ]);
+
+    const result = parseNormalizedPositionSnapshotsCsv(csv, {
+      defaultPlatform: 'Interactive Brokers',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.platform).toBe('Interactive Brokers');
+    expect(result.records[0]?.price).toBeUndefined();
+  });
+
+  it('rejects negative snapshot quantities', () => {
+    const csv = buildCsv([
+      'date,platform,asset_symbol,qty,currency',
+      '2025-03-31,DEGIRO,VWCE,-2,EUR',
+    ]);
+
+    const result = parseNormalizedPositionSnapshotsCsv(csv);
+    expect(result.records).toHaveLength(0);
+    expect(result.errors[0]?.message).toContain('qty');
   });
 });

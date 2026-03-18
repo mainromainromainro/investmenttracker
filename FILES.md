@@ -16,6 +16,7 @@
 - [README.md](/Users/romain/Investment%20Tracker/README.md) - Main documentation
 - [IMPLEMENTATION_NOTES.md](/Users/romain/Investment%20Tracker/IMPLEMENTATION_NOTES.md) - Architecture & TODOs
 - [PROJECT_SUMMARY.md](/Users/romain/Investment%20Tracker/PROJECT_SUMMARY.md) - Deliverables summary
+- [FINARY_BOURSE_CRYPTO_ALIGNMENT.md](/Users/romain/Investment%20Tracker/FINARY_BOURSE_CRYPTO_ALIGNMENT.md) - Product alignment and roadmap vs Finary (stocks + crypto)
 - [FILES.md](/Users/romain/Investment%20Tracker/FILES.md) - This file
 
 ## Source Code
@@ -63,9 +64,9 @@
 
 ## Summary
 
-**Total: 41 files**
+**Total: 42 files**
 - 6 Configuration files
-- 4 Documentation files
+- 5 Documentation files
 - 1 Database file
 - 5 Repository files
 - 5 Store files

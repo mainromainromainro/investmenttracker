@@ -4,8 +4,12 @@ import {
   CsvHeader,
   CsvParseError,
   CSV_IMPORT_FIELDS,
+  CSV_POSITION_SNAPSHOT_FIELDS,
+  NORMALIZED_POSITION_SNAPSHOT_HEADERS,
   NORMALIZED_TRANSACTION_HEADERS,
+  NormalizedPositionSnapshotRow,
   NormalizedTransactionRow,
+  parseNormalizedPositionSnapshotsCsv,
   parseNormalizedTransactionsCsv,
   suggestCsvColumnMapping,
 } from '../../lib/csvImport';
@@ -20,9 +24,13 @@ import { useFxStore } from '../../stores/fxStore';
 const BASE_CURRENCY = 'EUR';
 const COMMON_CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'CAD', 'SEK'];
 const REQUIRED_FIELDS: CsvHeader[] = ['date', 'kind'];
+const SNAPSHOT_REQUIRED_FIELDS: CsvHeader[] = ['date', 'asset_symbol', 'qty'];
 const MAPPING_STORAGE_KEY = 'investment-tracker.csv.mapping-templates.v1';
 const BROKER_FROM_CSV = '__from_csv__';
 const BROKER_CUSTOM = '__custom__';
+
+type ImportMode = 'monthly_positions' | 'transactions';
+type ParsedCsvRow = NormalizedTransactionRow | NormalizedPositionSnapshotRow;
 
 interface CsvMappingTemplateMemory {
   mapping: CsvColumnMapping;
@@ -178,10 +186,11 @@ const CsvImportSection: React.FC = () => {
   const platforms = usePlatformStore((s) => s.platforms);
   const fetchPlatforms = usePlatformStore((s) => s.fetchPlatforms);
 
+  const [importMode, setImportMode] = useState<ImportMode>('monthly_positions');
   const [csvStatus, setCsvStatus] = useState<'idle' | 'parsing' | 'mapping' | 'ready' | 'importing' | 'error'>(
     'idle',
   );
-  const [csvRows, setCsvRows] = useState<NormalizedTransactionRow[]>([]);
+  const [csvRows, setCsvRows] = useState<ParsedCsvRow[]>([]);
   const [csvErrors, setCsvErrors] = useState<CsvParseError[]>([]);
   const [csvMessage, setCsvMessage] = useState<string | null>(null);
   const [defaultCurrency, setDefaultCurrency] = useState<string>(BASE_CURRENCY);
@@ -198,7 +207,14 @@ const CsvImportSection: React.FC = () => {
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const refreshStores = useRefreshStores();
 
-  const csvHeaderExample = NORMALIZED_TRANSACTION_HEADERS.join(',');
+  const activeImportFields =
+    importMode === 'transactions' ? CSV_IMPORT_FIELDS : CSV_POSITION_SNAPSHOT_FIELDS;
+  const requiredFields =
+    importMode === 'transactions' ? REQUIRED_FIELDS : SNAPSHOT_REQUIRED_FIELDS;
+  const csvHeaderExample =
+    importMode === 'transactions'
+      ? NORMALIZED_TRANSACTION_HEADERS.join(',')
+      : NORMALIZED_POSITION_SNAPSHOT_HEADERS.join(',');
 
   const resetCsvState = (clearMessage: boolean) => {
     setCsvRows([]);
@@ -228,12 +244,18 @@ const CsvImportSection: React.FC = () => {
   useEffect(() => {
     if (!csvText) return;
     const selectedBroker = getBrokerFromSelection(brokerSelection, customBrokerName);
-
-    const result = parseNormalizedTransactionsCsv(csvText, {
-      defaultCurrency,
-      defaultPlatform: selectedBroker,
-      columnMapping,
-    });
+    const result =
+      importMode === 'transactions'
+        ? parseNormalizedTransactionsCsv(csvText, {
+            defaultCurrency,
+            defaultPlatform: selectedBroker,
+            columnMapping,
+          })
+        : parseNormalizedPositionSnapshotsCsv(csvText, {
+            defaultCurrency,
+            defaultPlatform: selectedBroker,
+            columnMapping,
+          });
 
     setCsvRows(result.records);
     setCsvErrors(result.errors);
@@ -262,14 +284,19 @@ const CsvImportSection: React.FC = () => {
       return;
     }
 
-    const requiresReview = REQUIRED_FIELDS.some(
+    const requiresReview = requiredFields.some(
       (field) => getFieldConfidence(field, columnMapping, suggestedMapping, mappingConfidence) < 0.6,
     );
 
     setCsvStatus(requiresReview ? 'mapping' : 'ready');
-    setCsvMessage(`${result.records.length} transactions prêtes à être importées.`);
+    setCsvMessage(
+      importMode === 'transactions'
+        ? `${result.records.length} transactions pretes a etre importees.`
+        : `${result.records.length} positions mensuelles pretes a etre importees.`,
+    );
   }, [
     csvText,
+    importMode,
     columnMapping,
     defaultCurrency,
     suggestedMapping,
@@ -359,7 +386,7 @@ const CsvImportSection: React.FC = () => {
     }));
   };
 
-  const ensureFxRates = async (rows: NormalizedTransactionRow[]) => {
+  const ensureFxRates = async (rows: Array<{ currency: string }>) => {
     const uniqueCurrencies = Array.from(new Set(rows.map((row) => row.currency))).filter(
       (currency) => currency && currency !== BASE_CURRENCY,
     );
@@ -399,12 +426,25 @@ const CsvImportSection: React.FC = () => {
         saveMappingTemplates(templates);
       }
 
-      const result = await adminRepository.importNormalizedTransactions(csvRows);
-      await ensureFxRates(csvRows);
-      await refreshStores();
-      setCsvMessage(
-        `Import terminé : ${result.transactionsCreated} transactions, ${result.assetsCreated} nouveaux actifs, ${result.platformsCreated} nouvelles plateformes.`,
-      );
+      if (importMode === 'transactions') {
+        const result = await adminRepository.importNormalizedTransactions(
+          csvRows as NormalizedTransactionRow[],
+        );
+        await ensureFxRates(csvRows);
+        await refreshStores();
+        setCsvMessage(
+          `Import termine : ${result.transactionsCreated} transactions, ${result.assetsCreated} nouveaux actifs, ${result.platformsCreated} nouvelles plateformes.`,
+        );
+      } else {
+        const result = await adminRepository.importMonthlyPositionSnapshots(
+          csvRows as NormalizedPositionSnapshotRow[],
+        );
+        await ensureFxRates(csvRows);
+        await refreshStores();
+        setCsvMessage(
+          `Import snapshot termine : ${result.snapshotsUpserted} lignes traitees, ${result.implicitClosures} clotures implicites, ${result.syntheticTransactionsRebuilt} deltas BUY/SELL recalcules.`,
+        );
+      }
       resetCsvState(false);
     } catch (error) {
       setCsvStatus('error');
@@ -438,6 +478,18 @@ const CsvImportSection: React.FC = () => {
             </span>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:min-w-[240px]">
+            <div className="flex flex-col">
+              <label className="text-xs text-stone-300 font-medium mb-1">Mode d'import</label>
+              <select
+                value={importMode}
+                onChange={(e) => setImportMode(e.target.value as ImportMode)}
+                className="px-2 py-1 border border-stone-300/30 bg-emerald-950/50 rounded text-sm text-stone-100"
+              >
+                <option value="monthly_positions">Positions mensuelles (recommande)</option>
+                <option value="transactions">Transactions detaillees</option>
+              </select>
+            </div>
+
             <div className="flex flex-col">
               <label className="text-xs text-stone-300 font-medium mb-1">Broker par défaut</label>
               <select
@@ -488,10 +540,9 @@ const CsvImportSection: React.FC = () => {
           </div>
         </div>
         <p className="text-sm text-stone-300">
-          Les types de transaction autorisés sont BUY, SELL, DEPOSIT, WITHDRAW, FEE. Pour BUY / SELL,
-          les colonnes <em>asset_*</em>, qty et price sont obligatoires. La colonne <em>platform</em> est
-          optionnelle si vous choisissez un broker par défaut ci-dessus. La devise par défaut est utilisée
-          si aucune colonne liée n’est fournie et qu’aucune devise n’est déduite du ticker.
+          {importMode === 'transactions'
+            ? 'Les types de transaction autorises sont BUY, SELL, DEPOSIT, WITHDRAW, FEE. Pour BUY / SELL, les colonnes asset_*, qty et price sont obligatoires. La colonne platform est optionnelle si vous choisissez un broker par defaut ci-dessus. La devise par defaut est utilisee si aucune colonne liee n’est fournie et qu’aucune devise n’est deduite du ticker.'
+            : 'Chaque CSV est traite comme un snapshot mensuel complet des positions pour chaque broker et chaque date du fichier. Si un ticker etait present au snapshot precedent mais disparait de ce CSV, la plateforme le considere comme cloture a 0 pour ce mois et recalcule automatiquement les deltas BUY / SELL.'}
         </p>
       </div>
 
@@ -522,10 +573,10 @@ const CsvImportSection: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {CSV_IMPORT_FIELDS.map((field) => {
+            {activeImportFields.map((field) => {
               const confidence = getFieldConfidence(field, columnMapping, suggestedMapping, mappingConfidence);
               const confidenceUi = confidenceText(confidence);
-              const required = REQUIRED_FIELDS.includes(field);
+              const required = requiredFields.includes(field);
               return (
                 <div key={field} className="rounded-md border border-stone-200/15 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -607,7 +658,9 @@ const CsvImportSection: React.FC = () => {
         >
           {csvStatus === 'importing'
             ? 'Import en cours…'
-            : `Importer${csvRows.length ? ` (${csvRows.length})` : ''}`}
+            : importMode === 'transactions'
+              ? `Importer les transactions${csvRows.length ? ` (${csvRows.length})` : ''}`
+              : `Importer les positions${csvRows.length ? ` (${csvRows.length})` : ''}`}
         </button>
         <button
           type="button"

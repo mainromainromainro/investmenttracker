@@ -34,8 +34,20 @@ export interface NormalizedTransactionRow {
   note?: string;
 }
 
-export interface CsvParseResult {
-  records: NormalizedTransactionRow[];
+export interface NormalizedPositionSnapshotRow {
+  date: number;
+  platform: string;
+  currency: string;
+  assetSymbol: string;
+  assetName?: string;
+  assetType?: AssetType;
+  qty: number;
+  price?: number;
+  note?: string;
+}
+
+export interface CsvParseResult<TRecord = NormalizedTransactionRow> {
+  records: TRecord[];
   errors: CsvParseError[];
 }
 
@@ -54,6 +66,12 @@ export interface ParseNormalizedTransactionsOptions {
   columnMapping?: CsvColumnMapping;
 }
 
+export interface ParseNormalizedPositionSnapshotsOptions {
+  defaultCurrency?: string;
+  defaultPlatform?: string;
+  columnMapping?: CsvColumnMapping;
+}
+
 const TRANSACTION_KINDS: TransactionKind[] = [
   'BUY',
   'SELL',
@@ -65,6 +83,7 @@ const TRANSACTION_KINDS: TransactionKind[] = [
 const ASSET_TYPES: AssetType[] = ['ETF', 'STOCK', 'CRYPTO'];
 
 const REQUIRED_HEADERS: CsvHeader[] = ['date', 'kind'];
+const POSITION_SNAPSHOT_REQUIRED_HEADERS: CsvHeader[] = ['date', 'asset_symbol', 'qty'];
 const BUY_SELL_HEADERS: CsvHeader[] = [
   'asset_symbol',
   'asset_name',
@@ -83,6 +102,18 @@ export const NORMALIZED_TRANSACTION_HEADERS: CsvHeader[] = [
   'note',
 ];
 
+export const NORMALIZED_POSITION_SNAPSHOT_HEADERS: CsvHeader[] = [
+  'date',
+  'platform',
+  'asset_symbol',
+  'asset_name',
+  'asset_type',
+  'qty',
+  'price',
+  'currency',
+  'note',
+];
+
 export const CSV_IMPORT_FIELDS: CsvHeader[] = [
   'date',
   'platform',
@@ -95,6 +126,18 @@ export const CSV_IMPORT_FIELDS: CsvHeader[] = [
   'currency',
   'cash_currency',
   'fee',
+  'note',
+];
+
+export const CSV_POSITION_SNAPSHOT_FIELDS: CsvHeader[] = [
+  'date',
+  'platform',
+  'asset_symbol',
+  'asset_name',
+  'asset_type',
+  'qty',
+  'price',
+  'currency',
   'note',
 ];
 
@@ -677,10 +720,28 @@ export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSugges
   };
 };
 
+const buildRowCells = (
+  canonicalHeaders: Array<CsvHeader | string | null>,
+  rawRow: string[],
+): Record<string, string> => {
+  const cells: Record<string, string> = {};
+
+  canonicalHeaders.forEach((header, index) => {
+    if (!header) {
+      return;
+    }
+    if (!(header in cells) || cells[header] === '') {
+      cells[header] = rawRow[index] ?? '';
+    }
+  });
+
+  return cells;
+};
+
 export const parseNormalizedTransactionsCsv = (
   csvText: string,
   options?: ParseNormalizedTransactionsOptions,
-): CsvParseResult => {
+): CsvParseResult<NormalizedTransactionRow> => {
   const rows = parseCsv(csvText);
   const errors: CsvParseError[] = [];
   if (rows.length === 0) {
@@ -736,16 +797,7 @@ export const parseNormalizedTransactionsCsv = (
     if (isRowEmpty(rawRow)) continue;
 
     const rowIndex = i + 1; // account for 1-based display including header row
-    const cells: Record<string, string> = {};
-
-    canonicalHeaders.forEach((header, index) => {
-      if (!header) {
-        return;
-      }
-      if (!(header in cells) || cells[header] === '') {
-        cells[header] = rawRow[index] ?? '';
-      }
-    });
+    const cells = buildRowCells(canonicalHeaders, rawRow);
 
     const rowErrors: string[] = [];
 
@@ -841,6 +893,142 @@ export const parseNormalizedTransactionsCsv = (
       qty: qtyValue ?? undefined,
       price: priceValue ?? undefined,
       fee: feeValue ?? undefined,
+      note,
+    });
+  }
+
+  return { records, errors };
+};
+
+export const parseNormalizedPositionSnapshotsCsv = (
+  csvText: string,
+  options?: ParseNormalizedPositionSnapshotsOptions,
+): CsvParseResult<NormalizedPositionSnapshotRow> => {
+  const rows = parseCsv(csvText);
+  const errors: CsvParseError[] = [];
+  if (rows.length === 0) {
+    return { records: [], errors: [{ row: 0, message: 'Le fichier est vide.' }] };
+  }
+
+  const fallbackCurrency = options?.defaultCurrency ?? DEFAULT_CURRENCY;
+  const fallbackPlatform = normalizePlatform(options?.defaultPlatform);
+
+  const rawHeaders = rows[0];
+  const normalizedHeaders = rawHeaders.map((header) => normalizeHeader(header));
+  const inferredCanonicalHeaders = normalizedHeaders.map(
+    (header) => inferHeaderAlias(header) ?? header,
+  );
+  const canonicalHeaders = applyColumnMappingOverrides(
+    rawHeaders,
+    inferredCanonicalHeaders,
+    options?.columnMapping,
+  );
+  const hasPlatformColumn = canonicalHeaders.includes('platform');
+
+  const missingHeaders = POSITION_SNAPSHOT_REQUIRED_HEADERS.filter(
+    (header) => !canonicalHeaders.includes(header),
+  );
+
+  if (missingHeaders.length > 0) {
+    return {
+      records: [],
+      errors: [
+        {
+          row: 0,
+          message: `Colonnes manquantes: ${missingHeaders.join(', ')}`,
+        },
+      ],
+    };
+  }
+
+  if (!hasPlatformColumn && !fallbackPlatform) {
+    return {
+      records: [],
+      errors: [
+        {
+          row: 0,
+          message: 'Colonne platform absente. Selectionnez un broker par defaut dans le menu deroulant.',
+        },
+      ],
+    };
+  }
+
+  const records: NormalizedPositionSnapshotRow[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const rawRow = rows[i];
+    if (isRowEmpty(rawRow)) continue;
+
+    const rowIndex = i + 1;
+    const cells = buildRowCells(canonicalHeaders, rawRow);
+    const rowErrors: string[] = [];
+
+    const platform = normalizePlatform(cells.platform) ?? fallbackPlatform;
+    if (!platform) {
+      rowErrors.push('Broker introuvable: ajoutez la colonne platform ou selectionnez un broker par defaut.');
+    }
+
+    const dateValue = cells.date;
+    const date = dateValue ? parseDate(dateValue) : null;
+    if (date === null) {
+      rowErrors.push('La colonne date doit contenir une date valide (ISO ou timestamp).');
+    }
+
+    const assetSymbol = normalizeAssetSymbol(cells.asset_symbol);
+    if (!assetSymbol) {
+      rowErrors.push('asset_symbol est requis pour un snapshot de position.');
+    }
+
+    const qtyValue = parseFloatSafe(cells.qty);
+    if (qtyValue === null || qtyValue < 0) {
+      rowErrors.push('qty doit etre positif ou nul pour un snapshot de position.');
+    }
+
+    const priceValue = parseFloatSafe(cells.price);
+    if (priceValue === null && cells.price && cells.price.trim() !== '') {
+      rowErrors.push(`price invalide: "${cells.price}".`);
+    }
+    if (priceValue !== null && priceValue < 0) {
+      rowErrors.push('price doit etre positif ou nul pour un snapshot de position.');
+    }
+
+    const providedCurrency = cells.currency ? normalizeCurrency(cells.currency) : null;
+    if (cells.currency && !providedCurrency) {
+      rowErrors.push(`Devise invalide: "${cells.currency}". Utilisez un code ISO (EUR, USD...).`);
+    }
+    const inferredCurrency = providedCurrency ?? inferCurrencyFromSymbol(assetSymbol);
+    const currency = inferredCurrency ?? fallbackCurrency;
+    if (!currency) {
+      rowErrors.push('Impossible de determiner la devise de la ligne.');
+    }
+
+    const assetName = normalizeAssetName(cells.asset_name);
+    let assetType: AssetType | undefined;
+    const normalizedAssetType = normalizeAssetType(cells.asset_type);
+    if (normalizedAssetType === null) {
+      rowErrors.push(
+        `asset_type invalide "${cells.asset_type}". Valeurs acceptees: ${ASSET_TYPES.join(', ')}`,
+      );
+    } else if (normalizedAssetType) {
+      assetType = normalizedAssetType;
+    }
+
+    const note = normalizeNote(cells.note);
+
+    if (rowErrors.length > 0) {
+      errors.push({ row: rowIndex, message: rowErrors.join(' ') });
+      continue;
+    }
+
+    records.push({
+      date: date!,
+      platform: platform!,
+      currency: currency!,
+      assetSymbol: assetSymbol!,
+      assetName: assetName || assetSymbol!,
+      assetType,
+      qty: qtyValue!,
+      price: priceValue ?? undefined,
       note,
     });
   }

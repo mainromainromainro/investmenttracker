@@ -3,10 +3,22 @@ import {
   Asset,
   FxSnapshot,
   Platform,
+  PositionSnapshot,
   PriceSnapshot,
   Transaction,
 } from '../types';
-import { NormalizedTransactionRow } from '../lib/csvImport';
+import {
+  NormalizedPositionSnapshotRow,
+  NormalizedTransactionRow,
+} from '../lib/csvImport';
+import {
+  buildImplicitZeroPositionSnapshots,
+  buildPositionSnapshotId,
+  buildPositionSnapshotPriceId,
+  buildSyntheticTransactionsFromPositionSnapshots,
+  collapsePositionSnapshotInputs,
+  isPositionSnapshotTransaction,
+} from '../lib/positionSnapshots';
 
 const withTables = [
   db.platforms,
@@ -14,7 +26,8 @@ const withTables = [
   db.transactions,
   db.priceSnapshots,
   db.fxSnapshots,
-] as const;
+  db.positionSnapshots,
+];
 
 const createId = (prefix: string) => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -32,13 +45,14 @@ export const adminRepository = {
    * partially reset states when an error occurs mid-operation.
    */
   resetDatabase: async () => {
-    await db.transaction('rw', ...withTables, async () => {
+    await db.transaction('rw', withTables, async () => {
       await Promise.all([
         db.platforms.clear(),
         db.assets.clear(),
         db.transactions.clear(),
         db.priceSnapshots.clear(),
         db.fxSnapshots.clear(),
+        db.positionSnapshots.clear(),
       ]);
     });
   },
@@ -155,7 +169,7 @@ export const adminRepository = {
       },
     ];
 
-    await db.transaction('rw', ...withTables, async () => {
+    await db.transaction('rw', withTables, async () => {
       await db.platforms.bulkPut(samplePlatforms);
       await db.assets.bulkPut(sampleAssets);
       await db.transactions.bulkPut(sampleTransactions);
@@ -180,7 +194,7 @@ export const adminRepository = {
     const priceSnapshots: PriceSnapshot[] = [];
     const priceKeySet = new Set<string>();
 
-    await db.transaction('rw', ...withTables, async () => {
+    await db.transaction('rw', withTables, async () => {
       const existingPlatforms = await db.platforms.toArray();
       const existingAssets = await db.assets.toArray();
 
@@ -236,6 +250,7 @@ export const adminRepository = {
           fee: row.fee ?? undefined,
           currency: row.cashCurrency ?? row.currency,
           note: row.note ?? undefined,
+          source: 'CSV_TRANSACTION',
           createdAt: timestamp + transactionsToCreate.length,
         };
         transactionsToCreate.push(transaction);
@@ -272,6 +287,186 @@ export const adminRepository = {
 
     return {
       transactionsCreated: transactionsToCreate.length,
+      platformsCreated: platformsCreated.length,
+      assetsCreated: assetsCreated.length,
+    };
+  },
+
+  importMonthlyPositionSnapshots: async (rows: NormalizedPositionSnapshotRow[]) => {
+    if (rows.length === 0) {
+      return {
+        snapshotsUpserted: 0,
+        implicitClosures: 0,
+        syntheticTransactionsRebuilt: 0,
+        platformsCreated: 0,
+        assetsCreated: 0,
+      };
+    }
+
+    const timestamp = Date.now();
+    const platformsCreated: Platform[] = [];
+    const assetsCreated: Asset[] = [];
+    let importedSnapshotCount = 0;
+    let implicitClosureCount = 0;
+    let syntheticTransactionCount = 0;
+
+    await db.transaction('rw', withTables, async () => {
+      const existingPlatforms = await db.platforms.toArray();
+      const existingAssets = await db.assets.toArray();
+      const existingSnapshots = await db.positionSnapshots.toArray();
+      const existingTransactions = await db.transactions.toArray();
+
+      const platformMap = new Map<string, Platform>();
+      existingPlatforms.forEach((platform) => {
+        platformMap.set(normalizeKey(platform.name), platform);
+      });
+
+      const assetMap = new Map<string, Asset>();
+      existingAssets.forEach((asset) => {
+        assetMap.set(asset.symbol.toUpperCase(), asset);
+      });
+
+      const importedSnapshotInputs = collapsePositionSnapshotInputs(
+        rows.map((row) => {
+          const platformKey = normalizeKey(row.platform);
+          let platform = platformMap.get(platformKey);
+          if (!platform) {
+            platform = {
+              id: createId('platform'),
+              name: row.platform.trim(),
+              createdAt: timestamp,
+            };
+            platformMap.set(platformKey, platform);
+            platformsCreated.push(platform);
+          }
+
+          const symbol = row.assetSymbol.toUpperCase();
+          let asset = assetMap.get(symbol);
+          if (!asset) {
+            asset = {
+              id: createId('asset'),
+              type: row.assetType ?? 'STOCK',
+              symbol,
+              name: row.assetName || row.assetSymbol,
+              currency: row.currency,
+              createdAt: timestamp,
+            };
+            assetMap.set(symbol, asset);
+            assetsCreated.push(asset);
+          }
+
+          return {
+            platformId: platform.id,
+            assetId: asset.id,
+            date: row.date,
+            qty: row.qty,
+            price: row.price,
+            currency: row.currency,
+            note: row.note,
+          };
+        }),
+      );
+
+      const implicitZeroInputs = buildImplicitZeroPositionSnapshots(
+        existingSnapshots,
+        importedSnapshotInputs,
+      );
+      importedSnapshotCount = importedSnapshotInputs.length;
+      implicitClosureCount = implicitZeroInputs.length;
+      const replacedSnapshotGroups = new Set(
+        importedSnapshotInputs.map((snapshot) => `${snapshot.platformId}:${snapshot.date}`),
+      );
+      const replacedSnapshotIds = existingSnapshots
+        .filter((snapshot) =>
+          replacedSnapshotGroups.has(`${snapshot.platformId}:${snapshot.date}`),
+        )
+        .map((snapshot) => snapshot.id);
+
+      const snapshotsToUpsert: PositionSnapshot[] = [
+        ...importedSnapshotInputs,
+        ...implicitZeroInputs,
+      ].map((snapshot, index) => ({
+        id: buildPositionSnapshotId(
+          snapshot.platformId,
+          snapshot.assetId,
+          snapshot.date,
+        ),
+        platformId: snapshot.platformId,
+        assetId: snapshot.assetId,
+        date: snapshot.date,
+        qty: snapshot.qty,
+        price: snapshot.price,
+        currency: snapshot.currency,
+        note: snapshot.note,
+        createdAt: timestamp + index,
+      }));
+
+      const mergedSnapshotMap = new Map<string, PositionSnapshot>();
+      existingSnapshots.forEach((snapshot) => {
+        const replacementKey = `${snapshot.platformId}:${snapshot.date}`;
+        if (replacedSnapshotGroups.has(replacementKey)) {
+          return;
+        }
+        mergedSnapshotMap.set(snapshot.id, snapshot);
+      });
+      snapshotsToUpsert.forEach((snapshot) => {
+        mergedSnapshotMap.set(snapshot.id, snapshot);
+      });
+
+      const syntheticTransactions = buildSyntheticTransactionsFromPositionSnapshots(
+        Array.from(mergedSnapshotMap.values()),
+      ).map((transaction, index) => ({
+        ...transaction,
+        createdAt: timestamp + index,
+      }));
+      syntheticTransactionCount = syntheticTransactions.length;
+
+      const syntheticTransactionIds = existingTransactions
+        .filter((transaction) => isPositionSnapshotTransaction(transaction))
+        .map((transaction) => transaction.id);
+
+      const priceSnapshotMap = new Map<string, PriceSnapshot>();
+      importedSnapshotInputs
+        .filter((snapshot) => snapshot.price !== undefined)
+        .forEach((snapshot, index) => {
+          priceSnapshotMap.set(buildPositionSnapshotPriceId(snapshot.assetId, snapshot.date), {
+            id: buildPositionSnapshotPriceId(snapshot.assetId, snapshot.date),
+            assetId: snapshot.assetId,
+            date: snapshot.date,
+            price: snapshot.price!,
+            currency: snapshot.currency,
+            createdAt: timestamp + index,
+          });
+        });
+      const priceSnapshots = Array.from(priceSnapshotMap.values());
+
+      if (platformsCreated.length) {
+        await db.platforms.bulkAdd(platformsCreated);
+      }
+      if (assetsCreated.length) {
+        await db.assets.bulkAdd(assetsCreated);
+      }
+      if (replacedSnapshotIds.length) {
+        await db.positionSnapshots.bulkDelete(replacedSnapshotIds);
+      }
+      if (snapshotsToUpsert.length) {
+        await db.positionSnapshots.bulkPut(snapshotsToUpsert);
+      }
+      if (priceSnapshots.length) {
+        await db.priceSnapshots.bulkPut(priceSnapshots);
+      }
+      if (syntheticTransactionIds.length) {
+        await db.transactions.bulkDelete(syntheticTransactionIds);
+      }
+      if (syntheticTransactions.length) {
+        await db.transactions.bulkPut(syntheticTransactions);
+      }
+    });
+
+    return {
+      snapshotsUpserted: importedSnapshotCount,
+      implicitClosures: implicitClosureCount,
+      syntheticTransactionsRebuilt: syntheticTransactionCount,
       platformsCreated: platformsCreated.length,
       assetsCreated: assetsCreated.length,
     };

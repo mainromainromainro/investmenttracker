@@ -9,6 +9,7 @@
 
 export type AssetType = 'ETF' | 'STOCK' | 'CRYPTO';
 export type TransactionKind = 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAW' | 'FEE';
+export type TransactionSource = 'MANUAL' | 'CSV_TRANSACTION' | 'POSITION_SNAPSHOT';
 
 // ─────────────────────────────────────────────────────────────────
 // Core Entities (persisted in IndexedDB)
@@ -38,6 +39,19 @@ export interface Transaction {
   qty?: number; // Required for BUY/SELL
   price?: number; // Required for BUY/SELL
   fee?: number;
+  currency: string;
+  note?: string;
+  source?: TransactionSource;
+  createdAt: number;
+}
+
+export interface PositionSnapshot {
+  id: string;
+  platformId: string;
+  assetId: string;
+  date: number; // Timestamp (ms)
+  qty: number;
+  price?: number;
   currency: string;
   note?: string;
   createdAt: number;

@@ -412,5 +412,80 @@ describe('Investment computations', () => {
       expect(summary.byTicker[0]?.qty).toBeCloseTo(6, 4);
       expect(summary.byTicker[0]?.valueEUR).toBeCloseTo(1134, 2); // 6 * 210 * 0.9
     });
+
+    it('should prefer snapshot-generated transactions over legacy transactions for the same pair', () => {
+      const timestamp = Date.now();
+      const platforms: Platform[] = [{ id: 'p1', name: 'Broker', createdAt: timestamp }];
+      const assets: Asset[] = [
+        {
+          id: 'a1',
+          type: 'ETF',
+          symbol: 'VWCE',
+          name: 'Vanguard FTSE All-World',
+          currency: 'EUR',
+          createdAt: timestamp,
+        },
+      ];
+      const transactions: Transaction[] = [
+        {
+          id: 'legacy_tx',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: Date.UTC(2025, 0, 31),
+          qty: 100,
+          price: 120,
+          currency: 'EUR',
+          source: 'CSV_TRANSACTION',
+          createdAt: timestamp,
+        },
+        {
+          id: 'snapshot_tx_1',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: Date.UTC(2025, 0, 31),
+          qty: 10,
+          price: 120,
+          currency: 'EUR',
+          source: 'POSITION_SNAPSHOT',
+          createdAt: timestamp + 1,
+        },
+        {
+          id: 'snapshot_tx_2',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: Date.UTC(2025, 1, 28),
+          qty: 5,
+          price: 125,
+          currency: 'EUR',
+          source: 'POSITION_SNAPSHOT',
+          createdAt: timestamp + 2,
+        },
+      ];
+      const prices: PriceSnapshot[] = [
+        {
+          id: 'price_1',
+          assetId: 'a1',
+          date: Date.UTC(2025, 1, 28),
+          price: 125,
+          currency: 'EUR',
+          createdAt: timestamp,
+        },
+      ];
+
+      const summary = computePortfolioSummary(
+        assets,
+        transactions,
+        prices,
+        [],
+        platforms,
+      );
+
+      expect(summary.positions).toHaveLength(1);
+      expect(summary.positions[0]?.qty).toBeCloseTo(15, 4);
+      expect(summary.byTicker[0]?.qty).toBeCloseTo(15, 4);
+    });
   });
 });
