@@ -11,6 +11,13 @@ export type { ImportMode, ImportSourceProfile } from '../../types';
 
 export type ParsedCsvRow = NormalizedTransactionRow | NormalizedPositionSnapshotRow;
 
+export interface DetectedImportPreset {
+  sourceProfile: ImportSourceProfile;
+  importMode: ImportMode;
+  platformName: string;
+  label: string;
+}
+
 export interface ImportFileInfo {
   name: string;
   size: number;
@@ -164,6 +171,72 @@ export const getImportSourceLabel = (sourceProfile: ImportSourceProfile): string
 export const getRecommendedMode = (sourceProfile: ImportSourceProfile): ImportMode =>
   IMPORT_SOURCE_OPTIONS.find((option) => option.value === sourceProfile)?.recommendedMode ??
   'transactions';
+
+const detectDelimiter = (line: string): ',' | ';' => {
+  const commaCount = (line.match(/,/g) ?? []).length;
+  const semicolonCount = (line.match(/;/g) ?? []).length;
+  return semicolonCount > commaCount ? ';' : ',';
+};
+
+const normalizeHeaderToken = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+
+export const detectImportPreset = (
+  csvText: string,
+  fileName?: string,
+): DetectedImportPreset | null => {
+  const firstLine = csvText.split(/\r?\n/, 1)[0] ?? '';
+  if (!firstLine.trim()) {
+    return null;
+  }
+
+  const headers = firstLine
+    .split(detectDelimiter(firstLine))
+    .map((header) => normalizeHeaderToken(header));
+  const headerSet = new Set(headers);
+  const normalizedFileName = (fileName ?? '').toLowerCase();
+
+  const looksLikeTrading212 =
+    headerSet.has('action') &&
+    headerSet.has('time') &&
+    headerSet.has('ticker') &&
+    headerSet.has('no_of_shares') &&
+    headerSet.has('price_share');
+
+  if (looksLikeTrading212 || normalizedFileName.includes('t212')) {
+    return {
+      sourceProfile: 'broker_export',
+      importMode: 'transactions',
+      platformName: 'Trading 212',
+      label: 'Trading 212',
+    };
+  }
+
+  const looksLikeRevolut =
+    headerSet.has('date') &&
+    headerSet.has('ticker') &&
+    headerSet.has('type') &&
+    headerSet.has('quantity') &&
+    headerSet.has('price_per_share') &&
+    headerSet.has('total_amount');
+
+  if (looksLikeRevolut || normalizedFileName.includes('revo') || normalizedFileName.includes('revolut')) {
+    return {
+      sourceProfile: 'broker_export',
+      importMode: 'transactions',
+      platformName: 'Revolut',
+      label: 'Revolut',
+    };
+  }
+
+  return null;
+};
 
 const isPositionRow = (row: ParsedCsvRow): row is NormalizedPositionSnapshotRow =>
   'qty' in row && !('kind' in row);

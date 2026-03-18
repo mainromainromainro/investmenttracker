@@ -204,6 +204,89 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records).toHaveLength(0);
     expect(result.errors[0]?.message).toContain('broker');
   });
+
+  it('parses a Trading 212 export row without manual mapping', () => {
+    const csv = buildCsv([
+      'Action,Time,ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,Currency (Price / share),Exchange rate,Result,Currency (Result),Total,Currency (Total),Currency conversion fee,Currency (Currency conversion fee),French transaction tax,Currency (French transaction tax)',
+      [
+        'Market buy',
+        '2025-01-03 12:09:50.447',
+        'IE00B3XXRP09',
+        'VUSA',
+        'Vanguard S&P 500 (Dist)',
+        '',
+        'EOF25960930110',
+        '0.0485920000',
+        '108.246000',
+        'EUR',
+        '1.00000000',
+        '',
+        'EUR',
+        '5.26',
+        'EUR',
+        '',
+        '',
+        '',
+        '',
+      ].join(','),
+      [
+        'Deposit',
+        '2025-01-03 11:15:09',
+        '',
+        '',
+        '',
+        'Bank Transfer',
+        'fa8f201d-9a60-4721-979d-6bb5cc88f957',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '50.00',
+        'EUR',
+        '',
+        '',
+        '',
+        '',
+      ].join(','),
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultPlatform: 'Trading 212',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0]?.kind).toBe('BUY');
+    expect(result.records[0]?.platform).toBe('Trading 212');
+    expect(result.records[0]?.assetSymbol).toBe('VUSA');
+    expect(result.records[0]?.qty).toBeCloseTo(0.048592, 6);
+    expect(result.records[0]?.price).toBeCloseTo(108.246, 3);
+    expect(result.records[1]?.kind).toBe('DEPOSIT');
+    expect(result.records[1]?.price).toBeCloseTo(50, 2);
+  });
+
+  it('parses a Revolut export with BUY - MARKET and DIVIDEND rows', () => {
+    const csv = buildCsv([
+      'Date,Ticker,Type,Quantity,Price per share,Total Amount,Currency,FX Rate',
+      '2025-01-03T09:35:02.169213Z,NKE,DIVIDEND,,,$0.17,USD,1.0318',
+      '2025-02-26T14:30:03.659Z,NKE,BUY - MARKET,0.04872107,$82.10,$4,USD,1.0511',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultPlatform: 'Revolut',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0]?.kind).toBe('DIVIDEND');
+    expect(result.records[0]?.assetSymbol).toBe('NKE');
+    expect(result.records[0]?.price).toBeCloseTo(0.17, 2);
+    expect(result.records[1]?.kind).toBe('BUY');
+    expect(result.records[1]?.qty).toBeCloseTo(0.04872107, 8);
+    expect(result.records[1]?.price).toBeCloseTo(82.1, 2);
+  });
 });
 
 describe('parseNormalizedPositionSnapshotsCsv', () => {

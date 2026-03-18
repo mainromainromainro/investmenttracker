@@ -25,6 +25,7 @@ import {
   buildFileFingerprint,
   buildImportPreviewStats,
   clearImportHistory,
+  detectImportPreset,
   findMatchingHistoryEntry,
   formatFileSize,
   formatLongDateTime,
@@ -507,7 +508,22 @@ const CsvImportSection: React.FC = () => {
         ...suggested,
         ...storedMapping,
       };
-      const fingerprint = buildFileFingerprint(text, importMode);
+      const detectedPreset = detectImportPreset(text, file.name);
+      const resolvedImportMode = detectedPreset?.importMode ?? importMode;
+      const fingerprint = buildFileFingerprint(text, resolvedImportMode);
+
+      if (detectedPreset) {
+        setSourceProfile(detectedPreset.sourceProfile);
+        setImportMode(detectedPreset.importMode);
+
+        if (platforms.some((platform) => platform.name === detectedPreset.platformName)) {
+          setTargetSelection(detectedPreset.platformName);
+          setCustomBrokerName('');
+        } else {
+          setTargetSelection(BROKER_CUSTOM);
+          setCustomBrokerName(detectedPreset.platformName);
+        }
+      }
 
       setCsvText(text);
       setCsvHeaders(suggestion.headers);
@@ -522,7 +538,7 @@ const CsvImportSection: React.FC = () => {
         fingerprint,
       });
 
-      if (storedTemplate?.broker) {
+      if (!detectedPreset && storedTemplate?.broker) {
         if (platforms.some((platform) => platform.name === storedTemplate.broker)) {
           setTargetSelection(storedTemplate.broker);
           setCustomBrokerName('');
@@ -537,6 +553,8 @@ const CsvImportSection: React.FC = () => {
 
       if (Object.keys(storedMapping).length > 0) {
         setCsvMessage('Un template de mapping a été reconnu automatiquement pour ce format.');
+      } else if (detectedPreset) {
+        setCsvMessage(`Format ${detectedPreset.label} détecté automatiquement.`);
       }
     } catch (error) {
       setCsvStatus('error');
@@ -1043,7 +1061,8 @@ const CsvImportSection: React.FC = () => {
             )}
           </div>
 
-          {csvHeaders.length > 0 && (
+          {csvHeaders.length > 0 &&
+            (csvStatus === 'mapping' || (previewStats?.requiredMappingCoverage ?? 1) < 1) && (
             <div className="rounded-3xl border border-stone-200/10 bg-white/5 p-5 shadow-lg shadow-emerald-950/10">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

@@ -78,6 +78,11 @@ const TRANSACTION_KINDS: TransactionKind[] = [
   'DEPOSIT',
   'WITHDRAW',
   'FEE',
+  'DIVIDEND',
+  'TRANSFER_IN',
+  'TRANSFER_OUT',
+  'STAKING_REWARD',
+  'AIRDROP',
 ];
 
 const ASSET_TYPES: AssetType[] = ['ETF', 'STOCK', 'CRYPTO'];
@@ -142,6 +147,7 @@ export const CSV_POSITION_SNAPSHOT_FIELDS: CsvHeader[] = [
 ];
 
 const HEADER_ALIASES: Record<string, CsvHeader> = {
+  time: 'date',
   transaction_date: 'date',
   trade_date: 'date',
   execution_date: 'date',
@@ -184,6 +190,7 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   units: 'qty',
   shares: 'qty',
   quantity: 'qty',
+  no_of_shares: 'qty',
   qty: 'qty',
   size: 'qty',
   volume: 'qty',
@@ -193,17 +200,24 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   nombre: 'qty',
   amount: 'qty',
   unit_price: 'price',
+  price_share: 'price',
   px: 'price',
   price_per_share: 'price',
   execution_price: 'price',
   average_price: 'price',
   avg_price: 'price',
+  total_amount: 'price',
+  total: 'price',
   prix: 'price',
   cours: 'price',
+  currency_price_share: 'currency',
+  currency_total: 'cash_currency',
   fees: 'fee',
   fee_amount: 'fee',
   commission: 'fee',
   commissions: 'fee',
+  currency_conversion_fee: 'fee',
+  french_transaction_tax: 'fee',
   charge: 'fee',
   charges: 'fee',
   frais: 'fee',
@@ -258,11 +272,17 @@ const HEADER_GUESS_RULES: Array<{ header: CsvHeader; pattern: RegExp }> = [
 const KIND_ALIASES: Record<string, TransactionKind> = {
   buy: 'BUY',
   purchase: 'BUY',
+  marketbuy: 'BUY',
+  buymarket: 'BUY',
+  limitbuy: 'BUY',
   achat: 'BUY',
   acquired: 'BUY',
   bought: 'BUY',
   b: 'BUY',
   sell: 'SELL',
+  marketsell: 'SELL',
+  sellmarket: 'SELL',
+  limitsell: 'SELL',
   vente: 'SELL',
   sold: 'SELL',
   s: 'SELL',
@@ -279,6 +299,12 @@ const KIND_ALIASES: Record<string, TransactionKind> = {
   fees: 'FEE',
   commission: 'FEE',
   frais: 'FEE',
+  dividend: 'DIVIDEND',
+  div: 'DIVIDEND',
+  transferin: 'TRANSFER_IN',
+  transferout: 'TRANSFER_OUT',
+  stakingreward: 'STAKING_REWARD',
+  airdrop: 'AIRDROP',
 };
 
 const ASSET_TYPE_ALIASES: Record<string, AssetType> = {
@@ -297,7 +323,13 @@ const DEFAULT_CURRENCY = 'EUR';
 const DEFAULT_ASSET_TYPE: AssetType = 'STOCK';
 
 const normalizeHeader = (header: string | undefined): CsvHeader | string =>
-  (header ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  (header ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
 
 const inferHeaderAliasWithConfidence = (
   header: string | undefined,
@@ -458,6 +490,24 @@ const normalizeCurrency = (value: string | undefined): string | null => {
   const trimmed = String(value ?? '').trim().toUpperCase();
   if (trimmed.length !== 3) return null;
   return trimmed;
+};
+
+const normalizeQuotedPrice = (
+  price: number | null,
+  currency: string | null,
+): { price: number | null; currency: string | null } => {
+  if (price === null || currency === null) {
+    return { price, currency };
+  }
+
+  if (currency === 'GBX') {
+    return {
+      price: price / 100,
+      currency: 'GBP',
+    };
+  }
+
+  return { price, currency };
 };
 
 const normalizePlatform = (value: string | undefined): string | null => {
@@ -722,6 +772,7 @@ export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSugges
 
 const buildRowCells = (
   canonicalHeaders: Array<CsvHeader | string | null>,
+  rawHeaders: string[],
   rawRow: string[],
 ): Record<string, string> => {
   const cells: Record<string, string> = {};
@@ -730,8 +781,30 @@ const buildRowCells = (
     if (!header) {
       return;
     }
+    const nextValue = rawRow[index] ?? '';
     if (!(header in cells) || cells[header] === '') {
-      cells[header] = rawRow[index] ?? '';
+      cells[header] = nextValue;
+      return;
+    }
+
+    if (header === 'fee' && nextValue.trim() !== '') {
+      const existingFee = parseFloatSafe(cells[header]);
+      const nextFee = parseFloatSafe(nextValue);
+      if (existingFee !== null && nextFee !== null) {
+        cells[header] = String(existingFee + nextFee);
+        return;
+      }
+    }
+
+    if (header === 'asset_symbol' && nextValue.trim() !== '') {
+      const normalizedRawHeader = normalizeHeader(rawHeaders[index]) as string;
+      if (
+        normalizedRawHeader.includes('ticker') ||
+        normalizedRawHeader === 'symbol' ||
+        normalizedRawHeader === 'ticker_symbol'
+      ) {
+        cells[header] = nextValue;
+      }
     }
   });
 
@@ -797,7 +870,7 @@ export const parseNormalizedTransactionsCsv = (
     if (isRowEmpty(rawRow)) continue;
 
     const rowIndex = i + 1; // account for 1-based display including header row
-    const cells = buildRowCells(canonicalHeaders, rawRow);
+    const cells = buildRowCells(canonicalHeaders, rawHeaders, rawRow);
 
     const rowErrors: string[] = [];
 
@@ -812,7 +885,11 @@ export const parseNormalizedTransactionsCsv = (
     }
 
     const inferredCurrency = providedCurrency ?? inferCurrencyFromSymbol(cells.asset_symbol);
-    const currency = inferredCurrency ?? fallbackCurrency;
+    const normalizedPrice = normalizeQuotedPrice(
+      parseFloatSafe(cells.price),
+      inferredCurrency ?? fallbackCurrency,
+    );
+    const currency = normalizedPrice.currency ?? fallbackCurrency;
     if (!currency) {
       rowErrors.push('Impossible de déterminer la devise de la ligne.');
     }
@@ -839,7 +916,7 @@ export const parseNormalizedTransactionsCsv = (
     }
 
     const qtyValue = parseFloatSafe(cells.qty);
-    const priceValue = parseFloatSafe(cells.price);
+    const priceValue = normalizedPrice.price;
     const feeValue = parseFloatSafe(cells.fee ?? undefined);
 
     if (feeValue === null && cells.fee && cells.fee.trim() !== '') {
@@ -859,17 +936,32 @@ export const parseNormalizedTransactionsCsv = (
       assetType = normalizedAssetType;
     }
 
-    const requiresAsset = kind === 'BUY' || kind === 'SELL';
+    const requiresAsset =
+      kind === 'BUY' ||
+      kind === 'SELL' ||
+      kind === 'DIVIDEND' ||
+      kind === 'TRANSFER_IN' ||
+      kind === 'TRANSFER_OUT' ||
+      kind === 'STAKING_REWARD' ||
+      kind === 'AIRDROP';
+    const requiresQuantity =
+      kind === 'BUY' ||
+      kind === 'SELL' ||
+      kind === 'TRANSFER_IN' ||
+      kind === 'TRANSFER_OUT' ||
+      kind === 'STAKING_REWARD' ||
+      kind === 'AIRDROP';
+    const requiresPrice = kind === 'BUY' || kind === 'SELL';
 
     if (requiresAsset) {
       if (!assetSymbol) {
-        rowErrors.push('asset_symbol est requis pour BUY / SELL.');
+        rowErrors.push(`asset_symbol est requis pour ${kind}.`);
       }
-      if (qtyValue === null || qtyValue <= 0) {
-        rowErrors.push('qty doit être positif pour BUY / SELL.');
+      if (requiresQuantity && (qtyValue === null || qtyValue <= 0)) {
+        rowErrors.push(`qty doit être positif pour ${kind}.`);
       }
-      if (priceValue === null || priceValue < 0) {
-        rowErrors.push('price doit être fourni pour BUY / SELL.');
+      if (requiresPrice && (priceValue === null || priceValue < 0)) {
+        rowErrors.push(`price doit être fourni pour ${kind}.`);
       }
       if (!assetType) {
         assetType = DEFAULT_ASSET_TYPE;
@@ -960,7 +1052,7 @@ export const parseNormalizedPositionSnapshotsCsv = (
     if (isRowEmpty(rawRow)) continue;
 
     const rowIndex = i + 1;
-    const cells = buildRowCells(canonicalHeaders, rawRow);
+    const cells = buildRowCells(canonicalHeaders, rawHeaders, rawRow);
     const rowErrors: string[] = [];
 
     const platform = normalizePlatform(cells.platform) ?? fallbackPlatform;
@@ -984,19 +1076,22 @@ export const parseNormalizedPositionSnapshotsCsv = (
       rowErrors.push('qty doit etre positif ou nul pour un snapshot de position.');
     }
 
-    const priceValue = parseFloatSafe(cells.price);
+    const providedCurrency = cells.currency ? normalizeCurrency(cells.currency) : null;
+    if (cells.currency && !providedCurrency) {
+      rowErrors.push(`Devise invalide: "${cells.currency}". Utilisez un code ISO (EUR, USD...).`);
+    }
+    const normalizedPrice = normalizeQuotedPrice(
+      parseFloatSafe(cells.price),
+      providedCurrency ?? fallbackCurrency,
+    );
+    const priceValue = normalizedPrice.price;
     if (priceValue === null && cells.price && cells.price.trim() !== '') {
       rowErrors.push(`price invalide: "${cells.price}".`);
     }
     if (priceValue !== null && priceValue < 0) {
       rowErrors.push('price doit etre positif ou nul pour un snapshot de position.');
     }
-
-    const providedCurrency = cells.currency ? normalizeCurrency(cells.currency) : null;
-    if (cells.currency && !providedCurrency) {
-      rowErrors.push(`Devise invalide: "${cells.currency}". Utilisez un code ISO (EUR, USD...).`);
-    }
-    const inferredCurrency = providedCurrency ?? inferCurrencyFromSymbol(assetSymbol);
+    const inferredCurrency = normalizedPrice.currency ?? providedCurrency ?? inferCurrencyFromSymbol(assetSymbol);
     const currency = inferredCurrency ?? fallbackCurrency;
     if (!currency) {
       rowErrors.push('Impossible de determiner la devise de la ligne.');
