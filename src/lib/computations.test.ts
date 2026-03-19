@@ -61,6 +61,37 @@ describe('Investment computations', () => {
       const qty = computePositionQty([], 'a1', 'p1');
       expect(qty).toBe(0);
     });
+
+    it('should keep platform-scoped and account-scoped quantities isolated', () => {
+      const transactions: Transaction[] = [
+        {
+          id: 'legacy',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: 1,
+          qty: 2,
+          price: 100,
+          currency: 'EUR',
+          createdAt: 1,
+        },
+        {
+          id: 'account_a',
+          platformId: 'p1',
+          accountId: 'account_a',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: 2,
+          qty: 3,
+          price: 100,
+          currency: 'EUR',
+          createdAt: 2,
+        },
+      ];
+
+      expect(computePositionQty(transactions, 'a1', 'p1')).toBe(2);
+      expect(computePositionQty(transactions, 'a1', 'p1', 'account_a')).toBe(3);
+    });
   });
 
   describe('getLatestPrice', () => {

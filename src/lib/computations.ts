@@ -195,7 +195,7 @@ export const computePositionQty = (
       (t) =>
         t.assetId === assetId &&
         t.platformId === platformId &&
-        (accountId === undefined ? true : t.accountId === accountId)
+        (accountId === undefined ? t.accountId === undefined : t.accountId === accountId)
     )
     .reduce((sum, t) => sum + getQuantityDelta(t), 0);
 };
