@@ -126,8 +126,23 @@ const fnv1a = (input: string): string => {
   return (hash >>> 0).toString(36);
 };
 
-export const buildFileFingerprint = (text: string, mode: ImportMode): string =>
-  `${HISTORY_VERSION_PREFIX}:${mode}:${fnv1a(text.replace(/\r\n/g, '\n'))}`;
+const normalizeFingerprintScope = (scope: string | undefined): string => {
+  const normalized = String(scope ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+  return normalized || '__default__';
+};
+
+export const buildFileFingerprint = (
+  text: string,
+  mode: ImportMode,
+  scope?: string,
+): string =>
+  `${HISTORY_VERSION_PREFIX}:${mode}:${normalizeFingerprintScope(scope)}:${fnv1a(
+    text.replace(/\r\n/g, '\n'),
+  )}`;
 
 export const formatFileSize = (size: number): string => {
   if (!Number.isFinite(size) || size <= 0) return '0 B';

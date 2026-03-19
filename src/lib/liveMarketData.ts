@@ -12,6 +12,15 @@ interface TwelveDataQuoteResponse {
   timestamp?: number;
 }
 
+interface TwelveDataExchangeRateResponse {
+  status?: string;
+  code?: number;
+  message?: string;
+  symbol?: string;
+  rate?: string | number;
+  timestamp?: number;
+}
+
 export interface LiveQuote {
   assetId: string;
   sourceSymbol: string;
@@ -41,6 +50,17 @@ const parsePrice = (value: string | undefined): number | null => {
   const parsed = Number(value);
   if (Number.isNaN(parsed) || !Number.isFinite(parsed)) return null;
   return parsed;
+};
+
+const parseNumericValue = (value: string | number | undefined): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 };
 
 const normalizeSymbol = (symbol: string): string => symbol.trim().toUpperCase();
@@ -125,6 +145,7 @@ export const fetchLiveQuotes = async (assets: Asset[]): Promise<LiveQuoteFetchRe
 };
 
 export const fetchFxRatesToEur = async (currencies: string[]): Promise<LiveFxFetchResult> => {
+  const apiKey = getLiveDataApiKey();
   const uniqueCurrencies = Array.from(
     new Set(
       currencies
@@ -140,14 +161,19 @@ export const fetchFxRatesToEur = async (currencies: string[]): Promise<LiveFxFet
     uniqueCurrencies.map(async (currency) => {
       try {
         const response = await fetch(
-          `https://api.frankfurter.app/latest?from=${encodeURIComponent(currency)}&to=EUR`,
+          `https://api.twelvedata.com/exchange_rate?symbol=${encodeURIComponent(
+            `${currency}/EUR`,
+          )}&apikey=${encodeURIComponent(apiKey)}`,
         );
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const payload = (await response.json()) as { rates?: Record<string, number> };
-        const rate = payload.rates?.EUR;
-        if (typeof rate !== 'number') {
+        const payload = (await response.json()) as TwelveDataExchangeRateResponse;
+        if (payload.status === 'error' || payload.code) {
+          throw new Error(payload.message ?? `Code ${payload.code ?? 'unknown'}`);
+        }
+        const rate = parseNumericValue(payload.rate);
+        if (rate === null) {
           throw new Error('No EUR conversion returned.');
         }
         rates[currency] = rate;
@@ -162,4 +188,3 @@ export const fetchFxRatesToEur = async (currencies: string[]): Promise<LiveFxFet
 
   return { rates, errors };
 };
-

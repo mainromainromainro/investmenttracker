@@ -25,13 +25,13 @@ interface AllocationSlice {
 }
 
 const ALLOCATION_COLORS = [
-  '#f5e7b8',
-  '#a7f3d0',
-  '#5eead4',
-  '#93c5fd',
-  '#fca5a5',
-  '#c4b5fd',
-  '#fdba74',
+  '#efe1bf',
+  '#d7e3c1',
+  '#a9c8a0',
+  '#7fa285',
+  '#c6d7b6',
+  '#93b18e',
+  '#e7d6b2',
 ];
 
 const formatCurrency = (value: number, currency = 'EUR') =>
@@ -212,7 +212,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
       title="Évolution"
       subtitle="Passez la souris sur la courbe pour voir la valeur du portefeuille à une date donnée."
     >
-      <div className="bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-900 p-6">
+      <div className="bg-gradient-to-br from-[#254535] via-[#315943] to-[#777652] p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.22em] text-stone-300">Point actif</p>
@@ -238,12 +238,12 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
           >
             <defs>
               <linearGradient id="simpleDashboardArea" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#d1fae5" stopOpacity="0.34" />
-                <stop offset="100%" stopColor="#d1fae5" stopOpacity="0.03" />
+                <stop offset="0%" stopColor="#f2e4c2" stopOpacity="0.32" />
+                <stop offset="100%" stopColor="#f2e4c2" stopOpacity="0.04" />
               </linearGradient>
               <linearGradient id="simpleDashboardLine" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="#fef3c7" />
-                <stop offset="100%" stopColor="#6ee7b7" />
+                <stop offset="0%" stopColor="#f3e1b7" />
+                <stop offset="100%" stopColor="#9fd0a0" />
               </linearGradient>
             </defs>
 
@@ -280,7 +280,7 @@ const PortfolioEvolutionChart: React.FC<{ history: PortfolioHistoryPoint[] }> = 
               stroke="rgba(245, 245, 244, 0.28)"
               strokeDasharray="4 6"
             />
-            <circle cx={activeX} cy={activeY} r="7" fill="#f8fafc" stroke="#052e2b" strokeWidth="3" />
+            <circle cx={activeX} cy={activeY} r="7" fill="#fbf7ef" stroke="#214634" strokeWidth="3" />
 
             {points.map((point, index) => (
               <g
@@ -700,7 +700,7 @@ const Dashboard: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="py-6 text-center text-stone-300">Chargement du dashboard...</div>;
+    return <div className="py-6 text-center text-[#607060]">Chargement du dashboard...</div>;
   }
 
   if (positions.length === 0) {
@@ -727,19 +727,19 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        <div className="rounded-3xl border border-stone-200/10 bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-900 p-8 text-center shadow-2xl shadow-emerald-950/30">
-          <p className="text-xs uppercase tracking-[0.26em] text-stone-300">Vue simple</p>
-          <h2 className="mt-3 text-3xl font-semibold text-white">
+        <div className="rounded-3xl border border-[#d6dccd] bg-gradient-to-br from-[#f7f2e8] via-[#eef3e8] to-[#dce7d8] p-8 text-center shadow-[0_24px_60px_rgba(88,102,74,0.12)]">
+          <p className="text-xs uppercase tracking-[0.26em] text-[#71806f]">Vue simple</p>
+          <h2 className="mt-3 text-3xl font-semibold text-[#173326]">
             Le dashboard affichera ici vos positions, leur valeur et leur évolution.
           </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-stone-200">
+          <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-[#607060]">
             Commencez par importer un CSV. Ensuite l’accueil se limitera à l’essentiel: les lignes ouvertes,
             la valeur actuelle du portefeuille et quelques graphiques interactifs.
           </p>
           <div className="mt-6">
             <Link
-              to="/import"
-              className="inline-flex rounded-full bg-stone-100 px-5 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-stone-200"
+              to="/settings"
+              className="inline-flex rounded-full bg-[#2e6a4c] px-5 py-3 text-sm font-semibold text-[#faf5eb] transition hover:bg-[#25563d]"
             >
               Importer un CSV
             </Link>
@@ -778,7 +778,7 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      <div className="rounded-3xl border border-stone-200/10 bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-900 p-6 shadow-2xl shadow-emerald-950/30">
+      <div className="rounded-3xl border border-stone-200/10 bg-gradient-to-br from-[#264838] via-[#315a42] to-[#797550] p-6 shadow-2xl shadow-emerald-950/20">
         <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
           <div>
             <p className="text-xs uppercase tracking-[0.26em] text-stone-300">Vue simple</p>
