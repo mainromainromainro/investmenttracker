@@ -80,7 +80,7 @@ const FxList: React.FC = () => {
       <div className="bg-white rounded-lg shadow p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <p className="text-sm text-gray-600 mb-4">
-            Example: "USD/EUR = 0.92" means 1 USD = 0.92 EUR
+            Example: <span className="font-mono">USD/EUR = 0.92</span> means 1 USD = 0.92 EUR
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

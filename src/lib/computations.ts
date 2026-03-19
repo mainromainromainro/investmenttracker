@@ -206,7 +206,7 @@ export const computePositionQty = (
 export const getLatestPrice = (
   prices: PriceSnapshot[],
   assetId: string
-): { price: number; date: number } | null => {
+): { price: number; date: number; currency: string } | null => {
   const assetPrices = prices.filter((p) => p.assetId === assetId);
   if (assetPrices.length === 0) return null;
   
@@ -214,20 +214,20 @@ export const getLatestPrice = (
     current.date > max.date ? current : max
   );
   
-  return { price: latest.price, date: latest.date };
+  return { price: latest.price, date: latest.date, currency: latest.currency };
 };
 
 const getLatestPriceAtDate = (
   prices: PriceSnapshot[],
   assetId: string,
   date: number
-): { price: number; date: number } | null => {
+): { price: number; date: number; currency: string } | null => {
   const candidates = prices.filter((p) => p.assetId === assetId && p.date <= date);
   if (candidates.length === 0) return null;
   const latest = candidates.reduce((max, current) =>
     current.date > max.date ? current : max
   );
-  return { price: latest.price, date: latest.date };
+  return { price: latest.price, date: latest.date, currency: latest.currency };
 };
 
 /**
@@ -331,7 +331,8 @@ export const computePortfolioSummary = (
       continue;
     }
     const latestPriceData = getLatestPrice(priceSnapshots, assetId);
-    const fxRate = getLatestFxRate(fxSnapshots, asset.currency);
+    const valuationCurrency = latestPriceData?.currency ?? asset.currency;
+    const fxRate = getLatestFxRate(fxSnapshots, valuationCurrency);
     const costState = computePositionCostState(pairTransactions, fxSnapshots);
     
     const valueEUR = computeValueEUR(
@@ -360,7 +361,7 @@ export const computePortfolioSummary = (
       qty,
       latestPrice: latestPriceData?.price ?? null,
       latestPriceDate: latestPriceData?.date ?? null,
-      currency: asset.currency,
+      currency: valuationCurrency,
       fxRate,
       costBasisEUR: costState.costBasisEUR,
       averageCost: costState.averageCost,
@@ -466,6 +467,7 @@ export const computePortfolioSummary = (
         qty: position.qty,
         latestPrice: position.latestPrice,
         latestPriceDate: position.latestPriceDate,
+        currency: position.currency,
         fxRate: position.fxRate,
         costBasisEUR: position.costBasisEUR,
         averageCost: position.averageCost,
@@ -480,6 +482,15 @@ export const computePortfolioSummary = (
 
     existing.qty += position.qty;
     existing.dividendIncomeEUR += position.dividendIncomeEUR;
+    if (
+      existing.latestPriceDate === null ||
+      (position.latestPriceDate !== null && position.latestPriceDate > existing.latestPriceDate)
+    ) {
+      existing.latestPrice = position.latestPrice;
+      existing.latestPriceDate = position.latestPriceDate;
+      existing.currency = position.currency;
+      existing.fxRate = position.fxRate;
+    }
     if (existing.valueEUR === null || position.valueEUR === null) {
       existing.valueEUR = null;
     } else {
@@ -552,7 +563,8 @@ export const computePortfolioSummary = (
       if (!asset) continue;
 
       const priceAtDate = getLatestPriceAtDate(priceSnapshots, assetId, date);
-      const fxRateAtDate = getLatestFxRateAtDate(fxSnapshots, asset.currency, date);
+      const priceCurrency = priceAtDate?.currency ?? asset.currency;
+      const fxRateAtDate = getLatestFxRateAtDate(fxSnapshots, priceCurrency, date);
       const valueEUR = computeValueEUR(qty, priceAtDate?.price ?? null, fxRateAtDate);
 
       if (valueEUR === null) {

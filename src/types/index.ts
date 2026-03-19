@@ -171,7 +171,7 @@ export interface Position {
   qty: number;
   latestPrice: number | null;
   latestPriceDate: number | null;
-  currency: string;
+  currency: string; // Valuation currency for the latest known price
   fxRate: number | null;
   costBasisEUR: number | null;
   averageCost: number | null;
@@ -188,6 +188,7 @@ export interface TickerHolding {
   qty: number;
   latestPrice: number | null;
   latestPriceDate: number | null;
+  currency: string;
   fxRate: number | null;
   costBasisEUR: number | null;
   averageCost: number | null;

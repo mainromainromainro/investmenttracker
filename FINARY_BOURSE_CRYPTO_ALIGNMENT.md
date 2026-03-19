@@ -4,6 +4,16 @@
 **Updated:** 2026-03-18  
 **Goal:** reproduce the useful part of Finary for listed securities and crypto tracking, but with **CSV uploads as the primary ingestion channel** instead of bank/broker APIs.
 
+## Implementation Progress
+
+**Overall progress:** `100%`
+
+- ✅ Tracking: progress review started and implementation steps locked
+- ✅ P0 import reliability: duplicate rows no longer persist; monthly snapshot replacement is account-scoped
+- ✅ P1 valuation and dashboard scoping: snapshot price currency now drives FX; fallback dashboard cost basis stays account-scoped
+- ✅ P2/P3 FX preload and lint enforcement: both `currency` and `cashCurrency` are prefetched; ESLint flat config now enforces real rulesets
+- ✅ Validation: `npx tsc --noEmit`, `npm test -- --run`, `npm run lint`, and `npm run build` all pass
+
 ## Product Scope
 
 ### In scope

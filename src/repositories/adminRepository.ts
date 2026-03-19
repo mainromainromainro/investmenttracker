@@ -18,6 +18,7 @@ import {
 } from '../lib/csvImport';
 import {
   buildImplicitZeroPositionSnapshots,
+  buildPositionSnapshotGroupKey,
   buildPositionSnapshotId,
   buildPositionSnapshotPriceId,
   buildSyntheticTransactionsFromPositionSnapshots,
@@ -413,6 +414,11 @@ export const adminRepository = {
       importJobId = options ? createId('import_job') : null;
 
       for (const row of rows) {
+        const rowNumber = importRows.length + 1;
+        const rowFingerprint = buildTransactionFingerprint(row);
+        const importRowId = importJobId ? buildImportRowId(importJobId, rowNumber) : undefined;
+        const isDuplicateInFile = rowFingerprintSet.has(rowFingerprint);
+
         const platformKey = normalizeKey(row.platform);
         let platform = platformMap.get(platformKey);
         if (!platform) {
@@ -455,6 +461,30 @@ export const adminRepository = {
             assetsCreated.push(asset);
           }
         }
+        importRows.push({
+          id: importRowId ?? createId('import_row'),
+          importJobId: importJobId ?? 'legacy_import',
+          rowNumber,
+          fingerprint: rowFingerprint,
+          status: isDuplicateInFile ? 'DUPLICATE_IN_FILE' : 'IMPORTED',
+          date: row.date,
+          platformName: row.platform,
+          accountName: account.name,
+          assetSymbol: row.assetSymbol,
+          kind: row.kind,
+          qty: row.qty,
+          currency: row.cashCurrency ?? row.currency,
+          message: isDuplicateInFile ? 'Duplicate row inside the same file.' : undefined,
+          createdAt: timestamp + importRows.length,
+        });
+        rowFingerprintSet.add(rowFingerprint);
+
+        // Keep duplicate rows in the audit trail, but never persist them as
+        // transactions or price points. Otherwise one bad CSV line duplicates
+        // both holdings and valuation inputs.
+        if (isDuplicateInFile) {
+          continue;
+        }
 
         const transaction: Transaction = {
           id: createId('tx'),
@@ -470,32 +500,11 @@ export const adminRepository = {
           note: row.note ?? undefined,
           source: 'CSV_TRANSACTION',
           importJobId: importJobId ?? undefined,
-          importRowId: importJobId ? buildImportRowId(importJobId, transactionsToCreate.length + 1) : undefined,
-          fingerprint: buildTransactionFingerprint(row),
+          importRowId,
+          fingerprint: rowFingerprint,
           createdAt: timestamp + transactionsToCreate.length,
         };
         transactionsToCreate.push(transaction);
-
-        const rowFingerprint = buildTransactionFingerprint(row);
-        importRows.push({
-          id: transaction.importRowId ?? createId('import_row'),
-          importJobId: importJobId ?? 'legacy_import',
-          rowNumber: importRows.length + 1,
-          fingerprint: rowFingerprint,
-          status: rowFingerprintSet.has(rowFingerprint) ? 'DUPLICATE_IN_FILE' : 'IMPORTED',
-          date: row.date,
-          platformName: row.platform,
-          accountName: account.name,
-          assetSymbol: row.assetSymbol,
-          kind: row.kind,
-          qty: row.qty,
-          currency: row.cashCurrency ?? row.currency,
-          message: rowFingerprintSet.has(rowFingerprint)
-            ? 'Duplicate row inside the same file.'
-            : undefined,
-          createdAt: timestamp + importRows.length,
-        });
-        rowFingerprintSet.add(rowFingerprint);
 
         if (asset && row.price) {
           const priceKey = `${asset.id}:${row.date}`;
@@ -721,11 +730,15 @@ export const adminRepository = {
       importedSnapshotCount = importedSnapshotInputs.length;
       implicitClosureCount = implicitZeroInputs.length;
       const replacedSnapshotGroups = new Set(
-        importedSnapshotInputs.map((snapshot) => `${snapshot.platformId}:${snapshot.date}`),
+        importedSnapshotInputs.map((snapshot) =>
+          buildPositionSnapshotGroupKey(snapshot.platformId, snapshot.date, snapshot.accountId),
+        ),
       );
       const replacedSnapshotIds = existingSnapshots
         .filter((snapshot) =>
-          replacedSnapshotGroups.has(`${snapshot.platformId}:${snapshot.date}`),
+          replacedSnapshotGroups.has(
+            buildPositionSnapshotGroupKey(snapshot.platformId, snapshot.date, snapshot.accountId),
+          ),
         )
         .map((snapshot) => snapshot.id);
 
@@ -753,7 +766,11 @@ export const adminRepository = {
 
       const mergedSnapshotMap = new Map<string, PositionSnapshot>();
       existingSnapshots.forEach((snapshot) => {
-        const replacementKey = `${snapshot.platformId}:${snapshot.date}`;
+        const replacementKey = buildPositionSnapshotGroupKey(
+          snapshot.platformId,
+          snapshot.date,
+          snapshot.accountId,
+        );
         if (replacedSnapshotGroups.has(replacementKey)) {
           return;
         }

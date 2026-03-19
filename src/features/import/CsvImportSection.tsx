@@ -608,10 +608,12 @@ const CsvImportSection: React.FC = () => {
     }));
   };
 
-  const ensureFxRates = async (rows: Array<{ currency: string }>) => {
-    const uniqueCurrencies = Array.from(new Set(rows.map((row) => row.currency))).filter(
-      (currency) => currency && currency !== BASE_CURRENCY,
-    );
+  const ensureFxRates = async (rows: Array<{ currency?: string; cashCurrency?: string }>) => {
+    // Transaction cost basis is persisted in settlement currency when provided,
+    // so preload FX for both quote and cash currencies before analytics run.
+    const uniqueCurrencies = Array.from(
+      new Set(rows.flatMap((row) => [row.currency, row.cashCurrency])),
+    ).filter((currency): currency is string => Boolean(currency) && currency !== BASE_CURRENCY);
     if (uniqueCurrencies.length === 0) {
       setFxMessage('Aucune conversion FX à compléter.');
       return;

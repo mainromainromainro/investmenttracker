@@ -93,7 +93,7 @@ describe('Investment computations', () => {
       ];
 
       const result = getLatestPrice(prices, 'a1');
-      expect(result).toEqual({ price: 110, date: 2000 });
+      expect(result).toEqual({ price: 110, date: 2000, currency: 'USD' });
     });
 
     it('should return null if no prices found', () => {
@@ -486,6 +486,76 @@ describe('Investment computations', () => {
       expect(summary.positions).toHaveLength(1);
       expect(summary.positions[0]?.qty).toBeCloseTo(15, 4);
       expect(summary.byTicker[0]?.qty).toBeCloseTo(15, 4);
+    });
+
+    it('should value holdings with the price snapshot currency when it differs from asset metadata', () => {
+      const timestamp = Date.now();
+      const platforms: Platform[] = [{ id: 'p1', name: 'Broker', createdAt: timestamp }];
+      const assets: Asset[] = [
+        {
+          id: 'a1',
+          type: 'STOCK',
+          symbol: 'DUAL',
+          name: 'Dual Currency Asset',
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+      ];
+      const transactions: Transaction[] = [
+        {
+          id: 't1',
+          platformId: 'p1',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: timestamp,
+          qty: 10,
+          price: 100,
+          currency: 'USD',
+          createdAt: timestamp,
+        },
+      ];
+      const prices: PriceSnapshot[] = [
+        {
+          id: 'ps1',
+          assetId: 'a1',
+          date: timestamp,
+          price: 120,
+          currency: 'GBP',
+          createdAt: timestamp,
+        },
+      ];
+      const fxSnapshots: FxSnapshot[] = [
+        {
+          id: 'fx_usd',
+          pair: 'USD/EUR',
+          date: timestamp,
+          rate: 0.8,
+          createdAt: timestamp,
+        },
+        {
+          id: 'fx_gbp',
+          pair: 'GBP/EUR',
+          date: timestamp,
+          rate: 1.15,
+          createdAt: timestamp,
+        },
+      ];
+
+      const summary = computePortfolioSummary(
+        assets,
+        transactions,
+        prices,
+        fxSnapshots,
+        platforms,
+      );
+
+      expect(summary.positions).toHaveLength(1);
+      expect(summary.positions[0]?.currency).toBe('GBP');
+      expect(summary.positions[0]?.fxRate).toBeCloseTo(1.15, 6);
+      expect(summary.positions[0]?.valueEUR).toBeCloseTo(1380, 2);
+      expect(summary.byTicker[0]?.currency).toBe('GBP');
+      expect(summary.byTicker[0]?.valueEUR).toBeCloseTo(1380, 2);
+      expect(summary.history[summary.history.length - 1]?.totalValueEUR).toBeCloseTo(1380, 2);
     });
   });
 });

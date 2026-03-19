@@ -8,6 +8,7 @@ import { useFxStore } from '../../stores/fxStore';
 import { computePortfolioSummary } from '../../lib/computations';
 import { PortfolioHistoryPoint, PortfolioSummary, Position, Transaction } from '../../types';
 import { fetchFxRatesToEur, fetchLiveQuotes } from '../../lib/liveMarketData';
+import { getPositionTransactions } from './dashboardAnalytics';
 
 type DashboardSeverity = 'info' | 'warn' | 'critical';
 
@@ -150,9 +151,6 @@ const getDashboardAnalyticsProvider = (): DashboardAnalyticsProvider | undefined
   return window.__investmentTrackerAnalytics ?? window.__portfolioAnalytics;
 };
 
-const getPositionTransactions = (transactions: Transaction[], assetId: string, platformId: string) =>
-  transactions.filter((tx) => tx.assetId === assetId && tx.platformId === platformId).sort((a, b) => a.date - b.date);
-
 const computeCostBasis = (
   transactions: Transaction[],
   fxSnapshots: DashboardAnalyticsInput['fxSnapshots'],
@@ -239,7 +237,12 @@ const buildHoldingInsights = (
   fxSnapshots: DashboardAnalyticsInput['fxSnapshots'],
 ): HoldingInsight[] => {
   return summary.positions.map((position) => {
-    const relevantTransactions = getPositionTransactions(transactions, position.assetId, position.platformId);
+    const relevantTransactions = getPositionTransactions(
+      transactions,
+      position.assetId,
+      position.platformId,
+      position.accountId,
+    );
     const costBasisResult = computeCostBasis(relevantTransactions, fxSnapshots);
 
     const unrealizedGainEUR =
@@ -1231,7 +1234,7 @@ const Dashboard: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 text-right text-stone-100">
                         {representative?.latestPrice !== null && representative?.latestPrice !== undefined
-                          ? `${representative.asset.currency} ${representative.latestPrice.toFixed(2)}`
+                          ? `${representative.currency} ${representative.latestPrice.toFixed(2)}`
                           : 'Missing price'}
                       </td>
                       <td className="px-6 py-4 text-right text-stone-100">

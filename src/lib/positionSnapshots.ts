@@ -47,6 +47,12 @@ export const buildPositionSnapshotId = (
   accountId?: string,
 ) => `${POSITION_SNAPSHOT_ID_PREFIX}:${platformId}:${getScopeAccountId(accountId)}:${assetId}:${date}`;
 
+export const buildPositionSnapshotGroupKey = (
+  platformId: string,
+  date: number,
+  accountId?: string,
+) => `${buildScopeKey(platformId, accountId)}:${date}`;
+
 export const buildPositionSnapshotTransactionId = (
   platformId: string,
   assetId: string,

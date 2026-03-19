@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildImplicitZeroPositionSnapshots,
+  buildPositionSnapshotGroupKey,
   buildSyntheticTransactionsFromPositionSnapshots,
   collapsePositionSnapshotInputs,
 } from './positionSnapshots';
@@ -50,6 +51,72 @@ describe('positionSnapshots', () => {
       date: Date.UTC(2025, 1, 28),
       qty: 0,
       currency: 'USD',
+    });
+  });
+
+  it('keeps monthly replacement scopes isolated by account', () => {
+    expect(buildPositionSnapshotGroupKey('p1', Date.UTC(2025, 1, 28), 'account_a')).not.toBe(
+      buildPositionSnapshotGroupKey('p1', Date.UTC(2025, 1, 28), 'account_b'),
+    );
+  });
+
+  it('does not infer closures for another account when one account is re-imported', () => {
+    const existingSnapshots: PositionSnapshot[] = [
+      {
+        id: 'snap_a_vwce',
+        platformId: 'p1',
+        accountId: 'account_a',
+        assetId: 'a_vwce',
+        date: Date.UTC(2025, 0, 31),
+        qty: 10,
+        price: 120,
+        currency: 'EUR',
+        createdAt: 1,
+      },
+      {
+        id: 'snap_a_msft',
+        platformId: 'p1',
+        accountId: 'account_a',
+        assetId: 'a_msft',
+        date: Date.UTC(2025, 0, 31),
+        qty: 5,
+        price: 400,
+        currency: 'USD',
+        createdAt: 2,
+      },
+      {
+        id: 'snap_b_btc',
+        platformId: 'p1',
+        accountId: 'account_b',
+        assetId: 'a_btc',
+        date: Date.UTC(2025, 0, 31),
+        qty: 0.5,
+        price: 45000,
+        currency: 'USD',
+        createdAt: 3,
+      },
+    ];
+
+    const importedSnapshots = [
+      {
+        platformId: 'p1',
+        accountId: 'account_a',
+        assetId: 'a_vwce',
+        date: Date.UTC(2025, 1, 28),
+        qty: 12,
+        price: 123,
+        currency: 'EUR',
+      },
+    ];
+
+    const zeros = buildImplicitZeroPositionSnapshots(existingSnapshots, importedSnapshots);
+    expect(zeros).toHaveLength(1);
+    expect(zeros[0]).toMatchObject({
+      platformId: 'p1',
+      accountId: 'account_a',
+      assetId: 'a_msft',
+      date: Date.UTC(2025, 1, 28),
+      qty: 0,
     });
   });
 
