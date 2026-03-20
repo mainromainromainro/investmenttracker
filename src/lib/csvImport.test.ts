@@ -287,6 +287,23 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records[1]?.qty).toBeCloseTo(0.04872107, 8);
     expect(result.records[1]?.price).toBeCloseTo(82.1, 2);
   });
+
+  it('ignores result adjustment rows that are not useful for investment tracking', () => {
+    const csv = buildCsv([
+      'Date,Type,Ticker,Quantity,Price per share,Currency',
+      '2025-02-01,Result Adjustment,,,,USD',
+      '2025-02-26,BUY - MARKET,NKE,0.04872107,$82.10,USD',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv, {
+      defaultPlatform: 'Revolut',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.kind).toBe('BUY');
+    expect(result.records[0]?.assetSymbol).toBe('NKE');
+  });
 });
 
 describe('parseNormalizedPositionSnapshotsCsv', () => {
@@ -323,6 +340,23 @@ describe('parseNormalizedPositionSnapshotsCsv', () => {
     expect(result.records).toHaveLength(1);
     expect(result.records[0]?.platform).toBe('Interactive Brokers');
     expect(result.records[0]?.price).toBeUndefined();
+  });
+
+  it('auto-detects required snapshot columns when headers are unconventional', () => {
+    const csv = buildCsv([
+      'date_releve;code_valeur;titres_detenus;devise',
+      '2025-03-31;MSFT;5;USD',
+    ]);
+
+    const result = parseNormalizedPositionSnapshotsCsv(csv, {
+      defaultPlatform: 'Interactive Brokers',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.assetSymbol).toBe('MSFT');
+    expect(result.records[0]?.qty).toBe(5);
+    expect(result.records[0]?.currency).toBe('USD');
   });
 
   it('rejects negative snapshot quantities', () => {

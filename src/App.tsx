@@ -11,7 +11,7 @@ const navItems = [
 function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <div className="relative min-h-screen overflow-hidden bg-transparent text-[#173326]">
+      <div className="relative min-h-screen overflow-hidden bg-transparent text-[#f7f2e5]">
         <div className="pointer-events-none absolute -left-24 top-[-120px] h-72 w-72 rounded-full bg-emerald-200/40 blur-3xl" />
         <div className="pointer-events-none absolute right-[-120px] top-48 h-80 w-80 rounded-full bg-amber-100/60 blur-3xl" />
         <div className="pointer-events-none absolute bottom-[-80px] left-1/3 h-72 w-72 rounded-full bg-lime-100/40 blur-3xl" />

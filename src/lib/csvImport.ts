@@ -165,10 +165,15 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   account_name: 'platform',
   where: 'platform',
   courtier: 'platform',
+  plateforme: 'platform',
   ticker: 'asset_symbol',
   tkr: 'asset_symbol',
   ticker_symbol: 'asset_symbol',
   symbol: 'asset_symbol',
+  code: 'asset_symbol',
+  code_valeur: 'asset_symbol',
+  code_titre: 'asset_symbol',
+  valeur_code: 'asset_symbol',
   instrument: 'asset_symbol',
   instrument_code: 'asset_symbol',
   instrument_symbol: 'asset_symbol',
@@ -190,6 +195,12 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   units: 'qty',
   shares: 'qty',
   quantity: 'qty',
+  titres: 'qty',
+  nb_titres: 'qty',
+  nombre_titres: 'qty',
+  titres_detenus: 'qty',
+  quantite_detenu: 'qty',
+  quantite_detenue: 'qty',
   no_of_shares: 'qty',
   qty: 'qty',
   size: 'qty',
@@ -306,6 +317,14 @@ const KIND_ALIASES: Record<string, TransactionKind> = {
   stakingreward: 'STAKING_REWARD',
   airdrop: 'AIRDROP',
 };
+
+const IGNORED_TRANSACTION_KIND_TOKENS = new Set([
+  'result_adjustment',
+  'adjustment_result',
+  'adjustement_resultat',
+  'resultat_adjustment',
+  'resultat_adjustement',
+]);
 
 const ASSET_TYPE_ALIASES: Record<string, AssetType> = {
   etf: 'ETF',
@@ -770,6 +789,32 @@ export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSugges
   };
 };
 
+const buildAutomaticColumnMapping = (
+  csvText: string,
+  inferredHeaders: Array<CsvHeader | string | null>,
+  targetFields: CsvHeader[],
+  minimumConfidence = 0.25,
+): CsvColumnMapping => {
+  const suggestion = suggestCsvColumnMapping(csvText);
+  const mapping: CsvColumnMapping = {};
+
+  for (const field of targetFields) {
+    if (inferredHeaders.includes(field)) {
+      continue;
+    }
+
+    const suggestedHeader = suggestion.mapping[field];
+    const confidence = suggestion.confidence[field] ?? 0;
+    if (!suggestedHeader || confidence < minimumConfidence) {
+      continue;
+    }
+
+    mapping[field] = suggestedHeader;
+  }
+
+  return mapping;
+};
+
 const buildRowCells = (
   canonicalHeaders: Array<CsvHeader | string | null>,
   rawHeaders: string[],
@@ -828,10 +873,18 @@ export const parseNormalizedTransactionsCsv = (
   const inferredCanonicalHeaders = normalizedHeaders.map(
     (header) => inferHeaderAlias(header) ?? header,
   );
+  const automaticMapping = buildAutomaticColumnMapping(
+    csvText,
+    inferredCanonicalHeaders,
+    REQUIRED_HEADERS,
+  );
   const canonicalHeaders = applyColumnMappingOverrides(
     rawHeaders,
     inferredCanonicalHeaders,
-    options?.columnMapping,
+    {
+      ...automaticMapping,
+      ...options?.columnMapping,
+    },
   );
   const hasPlatformColumn = canonicalHeaders.includes('platform');
 
@@ -873,6 +926,11 @@ export const parseNormalizedTransactionsCsv = (
     const cells = buildRowCells(canonicalHeaders, rawHeaders, rawRow);
 
     const rowErrors: string[] = [];
+    const normalizedKindToken = normalizeHeader(cells.kind) as string;
+
+    if (IGNORED_TRANSACTION_KIND_TOKENS.has(normalizedKindToken)) {
+      continue;
+    }
 
     const platform = normalizePlatform(cells.platform) ?? fallbackPlatform;
     if (!platform) {
@@ -1010,10 +1068,18 @@ export const parseNormalizedPositionSnapshotsCsv = (
   const inferredCanonicalHeaders = normalizedHeaders.map(
     (header) => inferHeaderAlias(header) ?? header,
   );
+  const automaticMapping = buildAutomaticColumnMapping(
+    csvText,
+    inferredCanonicalHeaders,
+    POSITION_SNAPSHOT_REQUIRED_HEADERS,
+  );
   const canonicalHeaders = applyColumnMappingOverrides(
     rawHeaders,
     inferredCanonicalHeaders,
-    options?.columnMapping,
+    {
+      ...automaticMapping,
+      ...options?.columnMapping,
+    },
   );
   const hasPlatformColumn = canonicalHeaders.includes('platform');
 
