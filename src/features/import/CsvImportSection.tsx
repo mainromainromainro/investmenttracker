@@ -14,17 +14,36 @@ import { useFxStore } from '../../stores/fxStore';
 import { usePlatformStore } from '../../stores/platformStore';
 import { usePriceStore } from '../../stores/priceStore';
 import { useTransactionStore } from '../../stores/transactionStore';
-import { buildFileFingerprint, formatFileSize, formatLongDateTime } from './importUx';
+import {
+  DetectedImportPreset,
+  ImportSupportStatus,
+  buildFileFingerprint,
+  detectImportPreset,
+  extractIbkrOpenPositionSummaryRows,
+  formatFileSize,
+  formatLongDateTime,
+  getImportModeLabel,
+  getImportSupportLabel,
+} from './importUx';
 
 const BASE_CURRENCY = 'EUR';
 
 type ParsedImportRow = NormalizedTransactionRow | NormalizedPositionSnapshotRow;
 type ParsedImportMode = 'transactions' | 'monthly_positions';
 
-interface ParsedImportResult {
+interface ParsedImportCandidate {
   mode: ParsedImportMode;
   rows: ParsedImportRow[];
   errors: CsvParseError[];
+}
+
+interface ParsedImportReview {
+  detectedPreset: DetectedImportPreset | null;
+  supportStatus: ImportSupportStatus;
+  supportNotes: string[];
+  recommendedMode: ParsedImportMode;
+  transactions: ParsedImportCandidate;
+  monthlyPositions: ParsedImportCandidate;
 }
 
 const formatShortDate = (value: number | null): string => {
@@ -43,60 +62,76 @@ const buildScopeKey = (defaultPlatform: string, accountName: string): string =>
     .filter(Boolean)
     .join('|') || '__default__';
 
-const looksLikeTransactionCsv = (csvText: string): boolean => {
-  const firstLine = (csvText.split(/\r?\n/, 1)[0] ?? '').toLowerCase();
-  return /(action|kind|operation|transaction|side|ordre|type)/.test(firstLine);
-};
-
 const parseInvestmentTrackingCsv = (
   csvText: string,
+  fileName: string | undefined,
   defaultPlatform: string,
-): ParsedImportResult => {
+): ParsedImportReview => {
+  const detectedPreset = detectImportPreset(csvText, fileName);
+  const fallbackPlatform =
+    defaultPlatform.trim() && defaultPlatform.trim() !== 'Portefeuille principal'
+      ? defaultPlatform.trim()
+      : undefined;
   const sharedOptions = {
     defaultCurrency: BASE_CURRENCY,
-    defaultPlatform: defaultPlatform.trim() || undefined,
+    defaultPlatform: fallbackPlatform ?? detectedPreset?.platformName,
   };
 
-  const transactionResult = parseNormalizedTransactionsCsv(csvText, sharedOptions);
-  const snapshotResult = parseNormalizedPositionSnapshotsCsv(csvText, sharedOptions);
-  const transactionHint = looksLikeTransactionCsv(csvText);
+  const transactionsResult = parseNormalizedTransactionsCsv(csvText, sharedOptions);
+  const monthlyPositionsResult = parseNormalizedPositionSnapshotsCsv(csvText, sharedOptions);
 
-  if (transactionHint && transactionResult.records.length > 0) {
-    return {
-      mode: 'transactions',
-      rows: transactionResult.records,
-      errors: transactionResult.errors,
-    };
+  let supportNotes = detectedPreset?.notes ?? [];
+  let supportStatus: ImportSupportStatus = detectedPreset?.supportStatus ?? 'manual';
+
+  const transactions: ParsedImportCandidate = {
+    mode: 'transactions',
+    rows: transactionsResult.records,
+    errors: transactionsResult.errors,
+  };
+
+  const monthlyPositions: ParsedImportCandidate = {
+    mode: 'monthly_positions',
+    rows: monthlyPositionsResult.records,
+    errors: monthlyPositionsResult.errors,
+  };
+
+  if (detectedPreset?.platformName === 'Interactive Brokers') {
+    const ibkrPositions = extractIbkrOpenPositionSummaryRows(
+      csvText,
+      fallbackPlatform ?? detectedPreset.platformName,
+    );
+    monthlyPositions.rows = ibkrPositions.records;
+    monthlyPositions.errors = ibkrPositions.errors;
+    transactions.rows = [];
+    transactions.errors = [
+      {
+        row: 0,
+        message:
+          'Ce rapport IBKR est traité en mode positions mensuelles. Utilisez Open Position Summary pour l’import V1.',
+      },
+    ];
+    supportNotes = [
+      ...(detectedPreset?.notes ?? []),
+      'Le tableau ci-dessous montre les positions extraites depuis Open Position Summary.',
+    ];
+    supportStatus = 'partial';
   }
 
-  if (snapshotResult.records.length > 0 && transactionResult.records.length === 0) {
-    return {
-      mode: 'monthly_positions',
-      rows: snapshotResult.records,
-      errors: snapshotResult.errors,
-    };
-  }
+  const recommendedMode =
+    detectedPreset?.importMode ??
+    (transactions.rows.length >= monthlyPositions.rows.length ? 'transactions' : 'monthly_positions');
 
-  if (transactionResult.records.length > 0 && snapshotResult.records.length === 0) {
-    return {
-      mode: 'transactions',
-      rows: transactionResult.records,
-      errors: transactionResult.errors,
-    };
-  }
-
-  if (transactionResult.records.length >= snapshotResult.records.length) {
-    return {
-      mode: 'transactions',
-      rows: transactionResult.records,
-      errors: transactionResult.errors,
-    };
+  if (!detectedPreset) {
+    supportNotes = ['Source non reconnue automatiquement. Vérifiez le mode avant import.'];
   }
 
   return {
-    mode: 'monthly_positions',
-    rows: snapshotResult.records,
-    errors: snapshotResult.errors,
+    detectedPreset,
+    supportStatus,
+    supportNotes,
+    recommendedMode,
+    transactions,
+    monthlyPositions,
   };
 };
 
@@ -173,7 +208,8 @@ const CsvImportSection: React.FC = () => {
     'idle',
   );
   const [csvText, setCsvText] = useState<string | null>(null);
-  const [parsedImport, setParsedImport] = useState<ParsedImportResult | null>(null);
+  const [parsedImport, setParsedImport] = useState<ParsedImportReview | null>(null);
+  const [selectedMode, setSelectedMode] = useState<ParsedImportMode>('transactions');
   const [message, setMessage] = useState<string | null>(null);
   const [defaultPlatform, setDefaultPlatform] = useState('Portefeuille principal');
   const [targetAccountName, setTargetAccountName] = useState('');
@@ -193,48 +229,49 @@ const CsvImportSection: React.FC = () => {
   useEffect(() => {
     if (!csvText) {
       setParsedImport(null);
+      setSelectedMode('transactions');
       return;
     }
 
-    const result = parseInvestmentTrackingCsv(csvText, defaultPlatform);
+    const result = parseInvestmentTrackingCsv(csvText, selectedFile?.name, defaultPlatform);
     setParsedImport(result);
+    const currentCandidate =
+      selectedMode === 'transactions' ? result.transactions : result.monthlyPositions;
+    const nextMode = currentCandidate.rows.length > 0 ? selectedMode : result.recommendedMode;
+    setSelectedMode(nextMode);
 
-    if (result.rows.length === 0) {
+    const activeCandidate = nextMode === 'transactions' ? result.transactions : result.monthlyPositions;
+
+    if (activeCandidate.rows.length === 0) {
       setStatus('error');
       setMessage(
-        result.errors[0]?.message ??
+        activeCandidate.errors[0]?.message ??
           'Aucune ligne utile n’a été reconnue pour le suivi de performance.',
       );
       return;
     }
 
     setStatus('ready');
-    if (result.errors.length > 0) {
-      setMessage(
-        `${result.rows.length} ligne(s) utiles détectées. ${result.errors.length} ligne(s) secondaires ou incomplètes seront ignorées.`,
-      );
-      return;
-    }
+    setMessage(null);
+  }, [csvText, defaultPlatform, selectedFile?.name, selectedMode]);
 
-    setMessage(
-      result.mode === 'transactions'
-        ? `${result.rows.length} transaction(s) prêtes à être importées.`
-        : `${result.rows.length} position(s) prêtes à être importées.`,
-    );
-  }, [csvText, defaultPlatform]);
+  const activeCandidate = useMemo<ParsedImportCandidate | null>(() => {
+    if (!parsedImport) return null;
+    return selectedMode === 'transactions' ? parsedImport.transactions : parsedImport.monthlyPositions;
+  }, [parsedImport, selectedMode]);
 
   const fileFingerprint = useMemo(() => {
     if (!csvText) return null;
-    const mode = parsedImport?.mode ?? 'transactions';
+    const mode = selectedMode;
     return buildFileFingerprint(
       csvText,
       mode,
       buildScopeKey(defaultPlatform, targetAccountName),
     );
-  }, [csvText, parsedImport?.mode, defaultPlatform, targetAccountName]);
+  }, [csvText, selectedMode, defaultPlatform, targetAccountName]);
 
   const preview = useMemo(() => {
-    if (!parsedImport || parsedImport.rows.length === 0) return null;
+    if (!activeCandidate || activeCandidate.rows.length === 0) return null;
 
     const currencies = new Set<string>();
     const assetSymbols = new Set<string>();
@@ -242,7 +279,7 @@ const CsvImportSection: React.FC = () => {
     const kinds = new Set<string>();
     const dates: number[] = [];
 
-    for (const row of parsedImport.rows) {
+    for (const row of activeCandidate.rows) {
       dates.push(row.date);
       platforms.add(row.platform);
       currencies.add(row.currency);
@@ -258,23 +295,24 @@ const CsvImportSection: React.FC = () => {
     }
 
     return {
-      mode: parsedImport.mode,
-      rowCount: parsedImport.rows.length,
-      ignoredCount: parsedImport.errors.length,
+      mode: activeCandidate.mode,
+      rowCount: activeCandidate.rows.length,
+      ignoredCount: activeCandidate.errors.length,
       assetCount: assetSymbols.size,
       platformCount: platforms.size,
       currencies: Array.from(currencies).sort(),
       kindCount: kinds.size,
       startDate: dates.length ? Math.min(...dates) : null,
       endDate: dates.length ? Math.max(...dates) : null,
-      sampleRows: parsedImport.rows.slice(0, 6),
+      sampleRows: activeCandidate.rows.slice(0, 6),
     };
-  }, [parsedImport]);
+  }, [activeCandidate]);
 
   const resetState = () => {
     setStatus('idle');
     setCsvText(null);
     setParsedImport(null);
+    setSelectedMode('transactions');
     setMessage(null);
     setSelectedFile(null);
     if (csvInputRef.current) {
@@ -342,7 +380,14 @@ const CsvImportSection: React.FC = () => {
   };
 
   const handleImport = async () => {
-    if (!parsedImport || !parsedImport.rows.length || !selectedFile || !fileFingerprint || status === 'importing') {
+    if (
+      !parsedImport ||
+      !activeCandidate ||
+      !activeCandidate.rows.length ||
+      !selectedFile ||
+      !fileFingerprint ||
+      status === 'importing'
+    ) {
       return;
     }
 
@@ -354,14 +399,16 @@ const CsvImportSection: React.FC = () => {
         fileSize: selectedFile.size,
         fileLastModified: selectedFile.lastModified,
         fileFingerprint,
-        sourceProfile: parsedImport.mode === 'transactions' ? 'broker_export' : 'monthly_statement',
+        sourceProfile:
+          parsedImport.detectedPreset?.sourceProfile ??
+          (selectedMode === 'transactions' ? 'broker_export' : 'monthly_statement'),
         targetAccountName: targetAccountName.trim() || undefined,
       } as const;
 
-      const fxSummary = await syncFxRates(parsedImport.rows);
-      if (parsedImport.mode === 'transactions') {
+      const fxSummary = await syncFxRates(activeCandidate.rows);
+      if (selectedMode === 'transactions') {
         const result = await adminRepository.importNormalizedTransactions(
-          parsedImport.rows as NormalizedTransactionRow[],
+          activeCandidate.rows as NormalizedTransactionRow[],
           importOptions,
         );
 
@@ -380,7 +427,7 @@ const CsvImportSection: React.FC = () => {
         }
       } else {
         const result = await adminRepository.importMonthlyPositionSnapshots(
-          parsedImport.rows as NormalizedPositionSnapshotRow[],
+          activeCandidate.rows as NormalizedPositionSnapshotRow[],
           importOptions,
         );
 
@@ -406,8 +453,11 @@ const CsvImportSection: React.FC = () => {
     }
   };
 
-  const ignoredErrors = parsedImport?.errors ?? [];
-  const canImport = status === 'ready' && Boolean(parsedImport?.rows.length);
+  const ignoredErrors = activeCandidate?.errors ?? [];
+  const canImport = status === 'ready' && Boolean(activeCandidate?.rows.length);
+  const sourcePreset = parsedImport?.detectedPreset ?? null;
+  const supportLabel = parsedImport ? getImportSupportLabel(parsedImport.supportStatus) : 'Auto';
+  const activeModeLabel = getImportModeLabel(selectedMode);
 
   return (
     <section className="rounded-[30px] border border-[#e8d6ac]/18 bg-[#0f2d20]/88 p-6 shadow-[0_30px_70px_rgba(5,18,12,0.35)] backdrop-blur">
@@ -415,19 +465,19 @@ const CsvImportSection: React.FC = () => {
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-[#c8b788]">Import CSV</p>
           <h3 className="mt-2 text-2xl font-semibold text-[#f7f2e5] sm:text-3xl">
-            Le fichier est analysé automatiquement et seules les lignes utiles au suivi sont gardées.
+            Le fichier est d’abord revu, puis seulement les lignes validées partent dans le suivi.
           </h3>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-[#c7d1c1]">
-            Achats, ventes, dividendes, top up, positions mensuelles: le reste est ignoré s’il n’aide
-            pas le suivi de performance.
+            On veut voir la source détectée, le mode retenu, les sections supportées et les lignes
+            ignorées ou rejetées avant d’importer.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs text-[#eadbbb]">
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Achat</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Vente</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Dividende</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Top up</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Snapshots</span>
+          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Revue</span>
+          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Quantités</span>
+          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Holdings</span>
+          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Support partiel</span>
+          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Audit</span>
         </div>
       </div>
 
@@ -493,6 +543,70 @@ const CsvImportSection: React.FC = () => {
         </label>
       </div>
 
+      {parsedImport && (
+        <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-5 text-sm text-[#d5dccf]">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Source détectée</p>
+            <div className="mt-3 space-y-2">
+              <p className="text-lg font-semibold text-[#f7f2e5]">
+                {sourcePreset?.label ?? 'Source non reconnue'}
+              </p>
+              <p className="text-sm text-[#c7d1c1]">
+                Support: <span className="font-semibold text-[#f7f2e5]">{supportLabel}</span>
+              </p>
+              <p className="text-sm text-[#c7d1c1]">
+                Mode conseillé: <span className="font-semibold text-[#f7f2e5]">{getImportModeLabel(parsedImport.recommendedMode)}</span>
+              </p>
+              {sourcePreset?.supportedSections.length ? (
+                <p className="text-sm text-[#c7d1c1]">
+                  Sections supportées: {sourcePreset.supportedSections.join(', ')}
+                </p>
+              ) : null}
+            </div>
+
+            {parsedImport.supportNotes.length > 0 && (
+              <div className="mt-4 rounded-2xl border border-[#e8d6ac]/12 bg-[#103123] px-4 py-3 text-xs leading-5 text-[#eadbbb]">
+                {parsedImport.supportNotes.map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-5 text-sm text-[#d5dccf]">
+            <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Mode de revue</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              {(['transactions', 'monthly_positions'] as ParsedImportMode[]).map((mode) => {
+                const candidate = mode === 'transactions' ? parsedImport.transactions : parsedImport.monthlyPositions;
+                const isActive = selectedMode === mode;
+                const isDisabled = candidate.rows.length === 0;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setSelectedMode(mode)}
+                    disabled={isDisabled}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                      isActive
+                        ? 'border-[#e6d2a5] bg-[#e6d2a5] text-[#173326]'
+                        : 'border-[#e8d6ac]/20 bg-[#0f2d20] text-[#f7f2e5] hover:bg-[#183a2b]'
+                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                  >
+                    {getImportModeLabel(mode)}
+                    <span className="ml-2 text-xs opacity-80">({candidate.rows.length})</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-4 text-xs leading-5 text-[#c7d1c1]">
+              {selectedMode === parsedImport.recommendedMode
+                ? 'Le mode affiché correspond au mode conseillé.'
+                : 'Le mode affiché a été modifié manuellement. Vérifie l’aperçu avant d’importer.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {selectedFile && (
         <div className="mt-5 grid gap-3 rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/72 p-4 text-sm text-[#d5dccf] md:grid-cols-3">
           <div>
@@ -528,18 +642,18 @@ const CsvImportSection: React.FC = () => {
         <div className="mt-5 space-y-5">
           <div className="grid gap-4 md:grid-cols-4">
             <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Mode</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Source</p>
               <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">
-                {preview.mode === 'transactions' ? 'Transactions' : 'Positions'}
+                {sourcePreset?.label ?? 'CSV'}
               </p>
             </div>
             <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Lignes utiles</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{preview.rowCount}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Mode</p>
+              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{activeModeLabel}</p>
             </div>
             <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Actifs</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{preview.assetCount}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Lignes retenues</p>
+              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{preview.rowCount}</p>
             </div>
             <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Ignorées</p>
@@ -564,6 +678,10 @@ const CsvImportSection: React.FC = () => {
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-[#c7d1c1]">Plateformes</dt>
                   <dd className="font-medium text-[#f7f2e5]">{preview.platformCount}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-[#c7d1c1]">Actifs</dt>
+                  <dd className="font-medium text-[#f7f2e5]">{preview.assetCount}</dd>
                 </div>
                 {preview.mode === 'transactions' && (
                   <div className="flex items-center justify-between gap-3">
@@ -616,7 +734,7 @@ const CsvImportSection: React.FC = () => {
 
       {ignoredErrors.length > 0 && (
         <div className="mt-5 rounded-[22px] border border-[#e8d6ac]/16 bg-[#153424]/72 px-4 py-4 text-sm text-[#d5dccf]">
-          <p className="font-semibold text-[#f0e2bf]">Lignes ignorées</p>
+          <p className="font-semibold text-[#f0e2bf]">Lignes ignorées / rejetées</p>
           <ul className="mt-3 space-y-2">
             {ignoredErrors.slice(0, 4).map((error) => (
               <li key={`${error.row}-${error.message}`}>

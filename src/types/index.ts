@@ -40,6 +40,21 @@ export type ImportRowStatus =
   | 'SKIPPED_DUPLICATE_IMPORT'
   | 'ERROR';
 
+export interface ImportSourceAuditFields {
+  sourceTemplateId?: string;
+  sourceSection?: string;
+  sourceSignature?: string;
+  sourceTicker?: string;
+  sourceIsin?: string;
+  sourceName?: string;
+  sourceCurrency?: string;
+  sourceRaw?: Record<string, string>;
+}
+
+export interface ImportSourceContext extends ImportSourceAuditFields {
+  sourceProfile?: ImportSourceProfile;
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Core Entities (persisted in IndexedDB)
 // ─────────────────────────────────────────────────────────────────
@@ -67,7 +82,7 @@ export interface Asset {
   createdAt: number;
 }
 
-export interface Transaction {
+export interface Transaction extends ImportSourceContext {
   id: string;
   platformId: string;
   accountId?: string;
@@ -87,7 +102,7 @@ export interface Transaction {
   createdAt: number;
 }
 
-export interface PositionSnapshot {
+export interface PositionSnapshot extends ImportSourceContext {
   id: string;
   platformId: string;
   accountId?: string;
@@ -101,7 +116,7 @@ export interface PositionSnapshot {
   createdAt: number;
 }
 
-export interface PriceSnapshot {
+export interface PriceSnapshot extends ImportSourceContext {
   id: string;
   assetId: string;
   date: number; // Timestamp (ms)
@@ -119,7 +134,7 @@ export interface FxSnapshot {
   createdAt: number;
 }
 
-export interface ImportJob {
+export interface ImportJob extends ImportSourceAuditFields {
   id: string;
   mode: ImportMode;
   sourceProfile: ImportSourceProfile;
@@ -140,7 +155,7 @@ export interface ImportJob {
   createdAt: number;
 }
 
-export interface ImportRow {
+export interface ImportRow extends ImportSourceContext {
   id: string;
   importJobId: string;
   rowNumber: number;

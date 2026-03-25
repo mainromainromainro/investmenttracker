@@ -10,6 +10,7 @@ import {
   Platform,
   PositionSnapshot,
   PriceSnapshot,
+  ImportSourceAuditFields,
   Transaction,
 } from '../types';
 import {
@@ -24,6 +25,7 @@ import {
   buildSyntheticTransactionsFromPositionSnapshots,
   collapsePositionSnapshotInputs,
   isPositionSnapshotTransaction,
+  type PositionSnapshotInput,
 } from '../lib/positionSnapshots';
 
 const withTables = [
@@ -54,7 +56,12 @@ interface ImportExecutionOptions {
   fileFingerprint: string;
   sourceProfile: ImportSourceProfile;
   targetAccountName?: string;
+  sourceContext?: ImportSourceAuditFields;
 }
+
+type ImportSourceContextInput = ImportSourceAuditFields & {
+  sourceProfile: ImportSourceProfile;
+};
 
 const createId = (prefix: string) => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -95,6 +102,53 @@ const buildSnapshotFingerprint = (row: NormalizedPositionSnapshotRow) =>
     row.note ?? '',
   ].join('|');
 
+const buildSourceContext = (
+  row: {
+    assetSymbol?: string;
+    assetName?: string;
+    currency: string;
+  },
+  options?: ImportExecutionOptions,
+): ImportSourceContextInput => ({
+  sourceProfile: options?.sourceProfile ?? 'custom',
+  sourceTemplateId: options?.sourceContext?.sourceTemplateId,
+  sourceSection: options?.sourceContext?.sourceSection,
+  sourceSignature: options?.sourceContext?.sourceSignature,
+  sourceTicker: row.assetSymbol,
+  sourceIsin: options?.sourceContext?.sourceIsin,
+  sourceName: row.assetName,
+  sourceCurrency: row.currency,
+  sourceRaw: options?.sourceContext?.sourceRaw,
+});
+
+const buildBatchSourceContext = (
+  options?: ImportExecutionOptions,
+): ImportSourceContextInput => ({
+  sourceProfile: options?.sourceProfile ?? 'custom',
+  sourceTemplateId: options?.sourceContext?.sourceTemplateId,
+  sourceSection: options?.sourceContext?.sourceSection,
+  sourceSignature: options?.sourceContext?.sourceSignature,
+  sourceIsin: options?.sourceContext?.sourceIsin,
+  sourceName: options?.sourceContext?.sourceName,
+  sourceCurrency: options?.sourceContext?.sourceCurrency,
+  sourceRaw: options?.sourceContext?.sourceRaw,
+});
+
+const buildSnapshotSourceContext = (
+  snapshot: PositionSnapshotInput & Partial<ImportSourceContextInput>,
+  options?: ImportExecutionOptions,
+): ImportSourceContextInput => ({
+  sourceProfile: snapshot.sourceProfile ?? options?.sourceProfile ?? 'custom',
+  sourceTemplateId: snapshot.sourceTemplateId ?? options?.sourceContext?.sourceTemplateId,
+  sourceSection: snapshot.sourceSection ?? options?.sourceContext?.sourceSection,
+  sourceSignature: snapshot.sourceSignature ?? options?.sourceContext?.sourceSignature,
+  sourceTicker: snapshot.sourceTicker,
+  sourceIsin: snapshot.sourceIsin ?? options?.sourceContext?.sourceIsin,
+  sourceName: snapshot.sourceName,
+  sourceCurrency: snapshot.sourceCurrency ?? snapshot.currency,
+  sourceRaw: snapshot.sourceRaw ?? options?.sourceContext?.sourceRaw,
+});
+
 const buildImportJob = (args: {
   id: string;
   mode: ImportMode;
@@ -112,6 +166,14 @@ const buildImportJob = (args: {
   id: args.id,
   mode: args.mode,
   sourceProfile: args.options.sourceProfile,
+  sourceTemplateId: args.options.sourceContext?.sourceTemplateId,
+  sourceSection: args.options.sourceContext?.sourceSection,
+  sourceSignature: args.options.sourceContext?.sourceSignature,
+  sourceTicker: args.options.sourceContext?.sourceTicker,
+  sourceIsin: args.options.sourceContext?.sourceIsin,
+  sourceName: args.options.sourceContext?.sourceName,
+  sourceCurrency: args.options.sourceContext?.sourceCurrency,
+  sourceRaw: args.options.sourceContext?.sourceRaw,
   status: args.status,
   platformId: args.platformId,
   accountId: args.accountId,
@@ -370,22 +432,26 @@ export const adminRepository = {
 
           await db.importJobs.add(duplicateJob);
           await db.importRows.bulkPut(
-            rows.map((row, index) => ({
-              id: buildImportRowId(importJobId!, index + 1),
-              importJobId: importJobId!,
-              rowNumber: index + 1,
-              fingerprint: buildTransactionFingerprint(row),
-              status: 'SKIPPED_DUPLICATE_IMPORT',
-              date: row.date,
-              platformName: row.platform,
-              accountName: options.targetAccountName,
-              assetSymbol: row.assetSymbol,
-              kind: row.kind,
-              qty: row.qty,
-              currency: row.cashCurrency ?? row.currency,
-              message: 'Skipped because this file fingerprint was already imported.',
-              createdAt: timestamp + index,
-            })),
+            rows.map((row, index) => {
+              const sourceContext = buildSourceContext(row, options);
+              return {
+                id: buildImportRowId(importJobId!, index + 1),
+                importJobId: importJobId!,
+                rowNumber: index + 1,
+                fingerprint: buildTransactionFingerprint(row),
+                status: 'SKIPPED_DUPLICATE_IMPORT',
+                date: row.date,
+                platformName: row.platform,
+                accountName: options.targetAccountName,
+                assetSymbol: row.assetSymbol,
+                kind: row.kind,
+                qty: row.qty,
+                currency: row.cashCurrency ?? row.currency,
+                message: 'Skipped because this file fingerprint was already imported.',
+                ...sourceContext,
+                createdAt: timestamp + index,
+              };
+            }),
           );
 
           return;
@@ -418,6 +484,7 @@ export const adminRepository = {
         const rowFingerprint = buildTransactionFingerprint(row);
         const importRowId = importJobId ? buildImportRowId(importJobId, rowNumber) : undefined;
         const isDuplicateInFile = rowFingerprintSet.has(rowFingerprint);
+        const sourceContext = buildSourceContext(row, options);
 
         const platformKey = normalizeKey(row.platform);
         let platform = platformMap.get(platformKey);
@@ -475,6 +542,7 @@ export const adminRepository = {
           qty: row.qty,
           currency: row.cashCurrency ?? row.currency,
           message: isDuplicateInFile ? 'Duplicate row inside the same file.' : undefined,
+          ...sourceContext,
           createdAt: timestamp + importRows.length,
         });
         rowFingerprintSet.add(rowFingerprint);
@@ -502,6 +570,7 @@ export const adminRepository = {
           importJobId: importJobId ?? undefined,
           importRowId,
           fingerprint: rowFingerprint,
+          ...sourceContext,
           createdAt: timestamp + transactionsToCreate.length,
         };
         transactionsToCreate.push(transaction);
@@ -516,6 +585,7 @@ export const adminRepository = {
               price: row.price,
               currency: row.currency,
               importJobId: importJobId ?? undefined,
+              ...sourceContext,
               createdAt: timestamp + priceSnapshots.length,
             });
             priceKeySet.add(priceKey);
@@ -624,21 +694,25 @@ export const adminRepository = {
             }),
           );
           await db.importRows.bulkPut(
-            rows.map((row, index) => ({
-              id: buildImportRowId(importJobId!, index + 1),
-              importJobId: importJobId!,
-              rowNumber: index + 1,
-              fingerprint: buildSnapshotFingerprint(row),
-              status: 'SKIPPED_DUPLICATE_IMPORT',
-              date: row.date,
-              platformName: row.platform,
-              accountName: options.targetAccountName,
-              assetSymbol: row.assetSymbol,
-              qty: row.qty,
-              currency: row.currency,
-              message: 'Skipped because this file fingerprint was already imported.',
-              createdAt: timestamp + index,
-            })),
+            rows.map((row, index) => {
+              const sourceContext = buildSourceContext(row, options);
+              return {
+                id: buildImportRowId(importJobId!, index + 1),
+                importJobId: importJobId!,
+                rowNumber: index + 1,
+                fingerprint: buildSnapshotFingerprint(row),
+                status: 'SKIPPED_DUPLICATE_IMPORT',
+                date: row.date,
+                platformName: row.platform,
+                accountName: options.targetAccountName,
+                assetSymbol: row.assetSymbol,
+                qty: row.qty,
+                currency: row.currency,
+                message: 'Skipped because this file fingerprint was already imported.',
+                ...sourceContext,
+                createdAt: timestamp + index,
+              };
+            }),
           );
           return;
         }
@@ -667,8 +741,9 @@ export const adminRepository = {
 
       importJobId = options ? createId('import_job') : null;
 
-      const snapshotInputs = [];
+      const snapshotInputs: Array<PositionSnapshotInput & ImportSourceContextInput> = [];
       for (const row of rows) {
+        const sourceContext = buildSourceContext(row, options);
         const platformKey = normalizeKey(row.platform);
         let platform = platformMap.get(platformKey);
         if (!platform) {
@@ -718,10 +793,13 @@ export const adminRepository = {
           price: row.price,
           currency: row.currency,
           note: row.note,
+          ...sourceContext,
         });
       }
 
-      const importedSnapshotInputs = collapsePositionSnapshotInputs(snapshotInputs);
+      const importedSnapshotInputs = collapsePositionSnapshotInputs(
+        snapshotInputs,
+      ) as Array<PositionSnapshotInput & ImportSourceContextInput>;
 
       const implicitZeroInputs = buildImplicitZeroPositionSnapshots(
         existingSnapshots,
@@ -745,24 +823,28 @@ export const adminRepository = {
       const snapshotsToUpsert: PositionSnapshot[] = [
         ...importedSnapshotInputs,
         ...implicitZeroInputs,
-      ].map((snapshot, index) => ({
-        id: buildPositionSnapshotId(
-          snapshot.platformId,
-          snapshot.assetId,
-          snapshot.date,
-          snapshot.accountId,
-        ),
-        platformId: snapshot.platformId,
-        accountId: snapshot.accountId,
-        assetId: snapshot.assetId,
-        date: snapshot.date,
-        qty: snapshot.qty,
-        price: snapshot.price,
-        currency: snapshot.currency,
-        note: snapshot.note,
-        importJobId: importJobId ?? undefined,
-        createdAt: timestamp + index,
-      }));
+      ].map((snapshot, index) => {
+        const sourceContext = buildSnapshotSourceContext(snapshot, options);
+        return {
+          id: buildPositionSnapshotId(
+            snapshot.platformId,
+            snapshot.assetId,
+            snapshot.date,
+            snapshot.accountId,
+          ),
+          platformId: snapshot.platformId,
+          accountId: snapshot.accountId,
+          assetId: snapshot.assetId,
+          date: snapshot.date,
+          qty: snapshot.qty,
+          price: snapshot.price,
+          currency: snapshot.currency,
+          note: snapshot.note,
+          importJobId: importJobId ?? undefined,
+          ...sourceContext,
+          createdAt: timestamp + index,
+        };
+      });
 
       const mergedSnapshotMap = new Map<string, PositionSnapshot>();
       existingSnapshots.forEach((snapshot) => {
@@ -784,6 +866,7 @@ export const adminRepository = {
         Array.from(mergedSnapshotMap.values()),
       ).map((transaction, index) => ({
         ...transaction,
+        ...buildBatchSourceContext(options),
         createdAt: timestamp + index,
       }));
       syntheticTransactionCount = syntheticTransactions.length;
@@ -796,6 +879,7 @@ export const adminRepository = {
       importedSnapshotInputs
         .filter((snapshot) => snapshot.price !== undefined)
         .forEach((snapshot, index) => {
+          const sourceContext = buildSnapshotSourceContext(snapshot, options);
           priceSnapshotMap.set(buildPositionSnapshotPriceId(snapshot.assetId, snapshot.date), {
             id: buildPositionSnapshotPriceId(snapshot.assetId, snapshot.date),
             assetId: snapshot.assetId,
@@ -803,6 +887,7 @@ export const adminRepository = {
             price: snapshot.price!,
             currency: snapshot.currency,
             importJobId: importJobId ?? undefined,
+            ...sourceContext,
             createdAt: timestamp + index,
           });
         });
@@ -850,20 +935,24 @@ export const adminRepository = {
           }),
         );
         await db.importRows.bulkPut(
-          rows.map((row, index) => ({
-            id: buildImportRowId(importJobId!, index + 1),
-            importJobId: importJobId!,
-            rowNumber: index + 1,
-            fingerprint: buildSnapshotFingerprint(row),
-            status: 'IMPORTED',
-            date: row.date,
-            platformName: row.platform,
-            accountName: options.targetAccountName,
-            assetSymbol: row.assetSymbol,
-            qty: row.qty,
-            currency: row.currency,
-            createdAt: timestamp + index,
-          })),
+          rows.map((row, index) => {
+            const sourceContext = buildSourceContext(row, options);
+            return {
+              id: buildImportRowId(importJobId!, index + 1),
+              importJobId: importJobId!,
+              rowNumber: index + 1,
+              fingerprint: buildSnapshotFingerprint(row),
+              status: 'IMPORTED',
+              date: row.date,
+              platformName: row.platform,
+              accountName: options.targetAccountName,
+              assetSymbol: row.assetSymbol,
+              qty: row.qty,
+              currency: row.currency,
+              ...sourceContext,
+              createdAt: timestamp + index,
+            };
+          }),
         );
       }
     });

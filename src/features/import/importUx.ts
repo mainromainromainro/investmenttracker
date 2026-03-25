@@ -2,20 +2,25 @@ import {
   CsvColumnMapping,
   CsvHeader,
   CsvParseError,
+  CsvParseResult,
   NormalizedPositionSnapshotRow,
   NormalizedTransactionRow,
 } from '../../lib/csvImport';
-import { ImportJob, ImportMode, ImportSourceProfile } from '../../types';
+import { AssetType, ImportJob, ImportMode, ImportSourceProfile } from '../../types';
 
 export type { ImportMode, ImportSourceProfile } from '../../types';
 
 export type ParsedCsvRow = NormalizedTransactionRow | NormalizedPositionSnapshotRow;
+export type ImportSupportStatus = 'full' | 'partial' | 'manual';
 
 export interface DetectedImportPreset {
   sourceProfile: ImportSourceProfile;
   importMode: ImportMode;
   platformName: string;
   label: string;
+  supportStatus: ImportSupportStatus;
+  supportedSections: string[];
+  notes: string[];
 }
 
 export interface ImportFileInfo {
@@ -115,6 +120,8 @@ export const IMPORT_SOURCE_OPTIONS: Array<{
   },
 ];
 
+const IBKR_SECTION_NAMES = ['Open Position Summary', 'Trade Summary', 'Deposits And Withdrawals'];
+
 const HISTORY_VERSION_PREFIX = 'csv-import-history';
 
 const fnv1a = (input: string): string => {
@@ -202,6 +209,176 @@ const normalizeHeaderToken = (value: string): string =>
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '');
 
+const normalizeDetectionText = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ');
+
+const parseQuotedCsvLine = (line: string): string[] => {
+  const cells: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+  return cells.map((cell) => cell.trim().replace(/^"|"$/g, ''));
+};
+
+const parseIbkrDate = (value: string | undefined): number | null => {
+  const trimmed = String(value ?? '').trim();
+  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  return Date.UTC(year, month - 1, day);
+};
+
+const parseIbkrNumber = (value: string | undefined): number | null => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(/[$,]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const inferIbkrAssetType = (financialInstrument: string | undefined, symbol: string | undefined): AssetType | null => {
+  const normalizedInstrument = normalizeHeaderToken(financialInstrument ?? '').replace(/_/g, '');
+  if (!normalizedInstrument) return 'STOCK';
+  if (normalizedInstrument.includes('cash')) return null;
+  if (normalizedInstrument.includes('etf')) return 'ETF';
+  if (normalizedInstrument.includes('crypto')) return 'CRYPTO';
+  if (normalizedInstrument.includes('stock') || normalizedInstrument.includes('equity')) return 'STOCK';
+  if (symbol && symbol.length <= 5 && symbol === symbol.toUpperCase()) return 'STOCK';
+  return 'STOCK';
+};
+
+const parseIbkrOpenPositionSummary = (
+  csvText: string,
+  defaultPlatform: string,
+): CsvParseResult<NormalizedPositionSnapshotRow> => {
+  const lines = csvText.split(/\r?\n/);
+  const rows: NormalizedPositionSnapshotRow[] = [];
+  const errors: CsvParseError[] = [];
+  const sectionName = 'Open Position Summary';
+  const headerPrefix = `${sectionName},Header,`;
+  const dataPrefix = `${sectionName},Data,`;
+
+  const headerLineIndex = lines.findIndex((line) => line.startsWith(headerPrefix));
+  if (headerLineIndex === -1) {
+    return {
+      records: [],
+      errors: [
+        {
+          row: 0,
+          message:
+            'Section Open Position Summary introuvable dans ce rapport IBKR. Seule cette section est prise en charge pour le moment.',
+        },
+      ],
+    };
+  }
+
+  const headerCells = parseQuotedCsvLine(lines[headerLineIndex] ?? '');
+  const headerMap = new Map<string, number>();
+  headerCells.slice(2).forEach((header, index) => {
+    headerMap.set(normalizeHeaderToken(header), index + 2);
+  });
+
+  const getCell = (cells: string[], header: string): string => {
+    const index = headerMap.get(header);
+    if (index === undefined) return '';
+    return cells[index] ?? '';
+  };
+
+  const platform = defaultPlatform.trim() || 'Interactive Brokers';
+
+  for (let lineIndex = headerLineIndex + 1; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex] ?? '';
+    if (!rawLine.startsWith(dataPrefix)) {
+      if (rawLine.startsWith('Open Position Summary,')) {
+        continue;
+      }
+      if (rawLine.trim() === '') {
+        continue;
+      }
+      break;
+    }
+
+    const cells = parseQuotedCsvLine(rawLine);
+    const rowNumber = lineIndex + 1;
+    const dateValue = getCell(cells, 'date');
+    const date = parseIbkrDate(dateValue);
+    const financialInstrument = getCell(cells, 'financialinstrument');
+    const currency = getCell(cells, 'currency').trim().toUpperCase();
+    const symbol = getCell(cells, 'symbol').trim().toUpperCase();
+    const description = getCell(cells, 'description').trim();
+    const quantity = parseIbkrNumber(getCell(cells, 'quantity'));
+    const closePrice = parseIbkrNumber(getCell(cells, 'closeprice'));
+    const note = `IBKR ${sectionName}`;
+
+    if (!financialInstrument) {
+      errors.push({
+        row: rowNumber,
+        message: 'financialInstrument manquant dans Open Position Summary.',
+      });
+      continue;
+    }
+
+    const assetType = inferIbkrAssetType(financialInstrument, symbol);
+    if (assetType === null) {
+      errors.push({
+        row: rowNumber,
+        message: `Ligne cash ignorée dans Open Position Summary: ${symbol || financialInstrument}.`,
+      });
+      continue;
+    }
+
+    if (date === null || !symbol || quantity === null || quantity <= 0 || !currency) {
+      errors.push({
+        row: rowNumber,
+        message: 'Ligne Open Position Summary incomplète ou invalide.',
+      });
+      continue;
+    }
+
+    rows.push({
+      date,
+      platform,
+      currency,
+      assetSymbol: symbol,
+      assetName: description || symbol,
+      assetType,
+      qty: quantity,
+      price: closePrice ?? undefined,
+      note,
+    });
+  }
+
+  return { records: rows, errors };
+};
+
 export const detectImportPreset = (
   csvText: string,
   fileName?: string,
@@ -216,6 +393,7 @@ export const detectImportPreset = (
     .map((header) => normalizeHeaderToken(header));
   const headerSet = new Set(headers);
   const normalizedFileName = (fileName ?? '').toLowerCase();
+  const normalizedText = normalizeDetectionText(csvText);
 
   const looksLikeTrading212 =
     headerSet.has('action') &&
@@ -230,6 +408,9 @@ export const detectImportPreset = (
       importMode: 'transactions',
       platformName: 'Trading 212',
       label: 'Trading 212',
+      supportStatus: 'full',
+      supportedSections: ['Transactions'],
+      notes: ['The current import flow supports the flat Trading 212 trade export.'],
     };
   }
 
@@ -245,12 +426,52 @@ export const detectImportPreset = (
     return {
       sourceProfile: 'broker_export',
       importMode: 'transactions',
-      platformName: 'Revolut',
-      label: 'Revolut',
+      platformName: 'Revolut Stock',
+      label: 'Revolut Stock',
+      supportStatus: 'full',
+      supportedSections: ['Transactions'],
+      notes: ['The current import flow supports the flat Revolut stock export.'],
+    };
+  }
+
+  const looksLikeIbkrReport =
+    IBKR_SECTION_NAMES.some((section) => normalizedText.includes(section.toLowerCase())) &&
+    normalizedText.includes('open position summary,header,date,financialinstrument');
+
+  if (looksLikeIbkrReport || normalizedFileName.includes('ibkr') || normalizedFileName.includes('interactive_brokers')) {
+    return {
+      sourceProfile: 'monthly_statement',
+      importMode: 'monthly_positions',
+      platformName: 'Interactive Brokers',
+      label: 'Interactive Brokers',
+      supportStatus: 'partial',
+      supportedSections: ['Open Position Summary'],
+      notes: [
+        'Only the Open Position Summary section is imported in V1.',
+        'Performance and trade summary sections are review-only for now.',
+      ],
     };
   }
 
   return null;
+};
+
+export const extractIbkrOpenPositionSummaryRows = (
+  csvText: string,
+  defaultPlatform: string,
+): CsvParseResult<NormalizedPositionSnapshotRow> => parseIbkrOpenPositionSummary(csvText, defaultPlatform);
+
+export const getImportSupportLabel = (status: ImportSupportStatus): string => {
+  switch (status) {
+    case 'full':
+      return 'Complet';
+    case 'partial':
+      return 'Partiel';
+    case 'manual':
+      return 'Manuel';
+    default:
+      return status;
+  }
 };
 
 const isPositionRow = (row: ParsedCsvRow): row is NormalizedPositionSnapshotRow =>

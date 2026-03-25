@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getPositionTransactions } from './dashboardAnalytics';
-import { Transaction } from '../../types';
+import { getPositionTransactions, sortHoldingsByQuantity } from './dashboardAnalytics';
+import { Transaction, TickerHolding } from '../../types';
 
 describe('dashboardAnalytics', () => {
   it('keeps same-platform holdings isolated by account when building cost basis inputs', () => {
@@ -71,6 +71,62 @@ describe('dashboardAnalytics', () => {
     ]);
     expect(getPositionTransactions(transactions, 'asset_1', 'platform_1', 'account_a')).toEqual([
       transactions[1],
+    ]);
+  });
+
+  it('sorts holdings by quantity before value', () => {
+    const holdings: TickerHolding[] = [
+      {
+        assetId: 'asset_1',
+        asset: {
+          id: 'asset_1',
+          type: 'STOCK',
+          symbol: 'AAA',
+          name: 'AAA',
+          currency: 'EUR',
+          createdAt: 1,
+        },
+        qty: 2,
+        latestPrice: 10,
+        latestPriceDate: 1,
+        currency: 'EUR',
+        fxRate: 1,
+        costBasisEUR: 20,
+        averageCost: 10,
+        unrealizedPnlEUR: 0,
+        unrealizedPnlPct: 0,
+        dividendIncomeEUR: 0,
+        hasKnownCostBasis: true,
+        valueEUR: 20,
+      },
+      {
+        assetId: 'asset_2',
+        asset: {
+          id: 'asset_2',
+          type: 'STOCK',
+          symbol: 'BBB',
+          name: 'BBB',
+          currency: 'EUR',
+          createdAt: 1,
+        },
+        qty: 10,
+        latestPrice: 1,
+        latestPriceDate: 1,
+        currency: 'EUR',
+        fxRate: 1,
+        costBasisEUR: 10,
+        averageCost: 1,
+        unrealizedPnlEUR: 0,
+        unrealizedPnlPct: 0,
+        dividendIncomeEUR: 0,
+        hasKnownCostBasis: true,
+        valueEUR: 10,
+      },
+    ];
+
+    expect(sortHoldingsByQuantity(holdings).map((holding) => holding.asset.symbol)).toEqual([
+      'BBB',
+      'AAA',
     ]);
   });
 });

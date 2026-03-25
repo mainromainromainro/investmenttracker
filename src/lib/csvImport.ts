@@ -1,4 +1,6 @@
-import { AssetType, TransactionKind } from '../types';
+import { AssetType, ImportMode, TransactionKind } from '../types';
+import { detectCsvSourceProfile, extractInteractiveBrokersOpenPositionSummary, CsvSourceProfile } from './csvSourceProfiles';
+import { normalizeCsvToken, parseCsvRows } from './csvText';
 
 export type CsvHeader =
   | 'date'
@@ -70,6 +72,15 @@ export interface ParseNormalizedPositionSnapshotsOptions {
   defaultCurrency?: string;
   defaultPlatform?: string;
   columnMapping?: CsvColumnMapping;
+}
+
+export interface RecognizedCsvParseResult<TRecord = NormalizedTransactionRow | NormalizedPositionSnapshotRow> {
+  sourceProfile: CsvSourceProfile;
+  platformName: string | null;
+  mode: ImportMode;
+  records: TRecord[];
+  errors: CsvParseError[];
+  unsupportedSections: string[];
 }
 
 const TRANSACTION_KINDS: TransactionKind[] = [
@@ -328,6 +339,9 @@ const IGNORED_TRANSACTION_KIND_TOKENS = new Set([
 
 const ASSET_TYPE_ALIASES: Record<string, AssetType> = {
   etf: 'ETF',
+  etfs: 'ETF',
+  fund: 'ETF',
+  funds: 'ETF',
   stock: 'STOCK',
   stocks: 'STOCK',
   equity: 'STOCK',
@@ -342,13 +356,7 @@ const DEFAULT_CURRENCY = 'EUR';
 const DEFAULT_ASSET_TYPE: AssetType = 'STOCK';
 
 const normalizeHeader = (header: string | undefined): CsvHeader | string =>
-  (header ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/['"]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '');
+  normalizeCsvToken(header);
 
 const inferHeaderAliasWithConfidence = (
   header: string | undefined,
@@ -377,65 +385,7 @@ const inferHeaderAlias = (header: string | undefined): CsvHeader | null =>
 const isRowEmpty = (row: string[]): boolean =>
   row.every((value) => (value ?? '').trim() === '');
 
-const detectDelimiter = (text: string): ',' | ';' => {
-  const firstLine = text.split(/\r?\n/)[0] ?? '';
-  const commaCount = (firstLine.match(/,/g) ?? []).length;
-  const semicolonCount = (firstLine.match(/;/g) ?? []).length;
-  if (semicolonCount > commaCount) {
-    return ';';
-  }
-  return ',';
-};
-
-const parseCsv = (text: string): string[][] => {
-  const delimiter = detectDelimiter(text);
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentField = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (char === '"') {
-      if (inQuotes && text[i + 1] === '"') {
-        currentField += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === delimiter && !inQuotes) {
-      currentRow.push(currentField);
-      currentField = '';
-      continue;
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && text[i + 1] === '\n') {
-        i++;
-      }
-      currentRow.push(currentField);
-      currentField = '';
-      if (!isRowEmpty(currentRow)) {
-        rows.push(currentRow);
-      }
-      currentRow = [];
-      continue;
-    }
-
-    currentField += char;
-  }
-
-  currentRow.push(currentField);
-  if (!isRowEmpty(currentRow)) {
-    rows.push(currentRow);
-  }
-
-  return rows;
-};
+const parseCsv = (text: string): string[][] => parseCsvRows(text);
 
 const parseFloatSafe = (value: string | undefined): number | null => {
   if (value === undefined) return null;
@@ -483,14 +433,24 @@ const parseDate = (value: string | undefined): number | null => {
     }
   }
 
-  const dmyMatch = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
-  if (dmyMatch) {
-    const day = Number(dmyMatch[1]);
-    const month = Number(dmyMatch[2]);
-    const yearPart = Number(dmyMatch[3]);
+  const slashMatch = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (slashMatch) {
+    const first = Number(slashMatch[1]);
+    const second = Number(slashMatch[2]);
+    const yearPart = Number(slashMatch[3]);
     const year = yearPart < 100 ? 2000 + yearPart : yearPart;
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return Date.UTC(year, month - 1, day);
+
+    if (first >= 1 && first <= 31 && second >= 1 && second <= 12 && first > 12) {
+      return Date.UTC(year, second - 1, first);
+    }
+    if (first >= 1 && first <= 12 && second >= 1 && second <= 31 && second > 12) {
+      return Date.UTC(year, first - 1, second);
+    }
+    if (first >= 1 && first <= 31 && second >= 1 && second <= 12) {
+      return Date.UTC(year, second - 1, first);
+    }
+    if (first >= 1 && first <= 12 && second >= 1 && second <= 31) {
+      return Date.UTC(year, first - 1, second);
     }
   }
 
@@ -854,6 +814,211 @@ const buildRowCells = (
   });
 
   return cells;
+};
+
+const buildStructuredRowCells = (headers: string[], rawRow: string[]): Record<string, string> => {
+  const cells: Record<string, string> = {};
+
+  headers.forEach((header, index) => {
+    const normalizedHeader = normalizeHeader(header) as string;
+    if (!normalizedHeader) {
+      return;
+    }
+    cells[normalizedHeader] = rawRow[index] ?? '';
+  });
+
+  return cells;
+};
+
+const normalizeIbkrInstrumentType = (value: string | undefined): AssetType | null => {
+  const normalized = normalizeHeader(value).replace(/[^a-z0-9]/g, '');
+  if (!normalized) return null;
+  if (normalized === 'cash') return null;
+  if (normalized.includes('etf') || normalized.includes('fund')) return 'ETF';
+  if (normalized.includes('stock') || normalized.includes('share') || normalized.includes('equity')) {
+    return 'STOCK';
+  }
+  if (normalized.includes('crypto') || normalized.includes('coin') || normalized.includes('token')) {
+    return 'CRYPTO';
+  }
+  return null;
+};
+
+export const parseInteractiveBrokersOpenPositionSummaryCsv = (
+  csvText: string,
+  options?: ParseNormalizedPositionSnapshotsOptions,
+): CsvParseResult<NormalizedPositionSnapshotRow> => {
+  const extraction = extractInteractiveBrokersOpenPositionSummary(csvText);
+  if (!extraction.section) {
+    return {
+      records: [],
+      errors: [{ row: 0, message: 'Section Open Position Summary introuvable dans le rapport IBKR.' }],
+    };
+  }
+
+  const fallbackCurrency = options?.defaultCurrency ?? DEFAULT_CURRENCY;
+  const fallbackPlatform = normalizePlatform(options?.defaultPlatform) ?? 'Interactive Brokers';
+  const headerIndex = new Map(
+    extraction.section.headers.map((header, index) => [normalizeHeader(header) as string, index]),
+  );
+  const getValue = (row: string[], headerName: string): string | undefined => {
+    const index = headerIndex.get(normalizeHeader(headerName) as string);
+    if (index === undefined) return undefined;
+    return row[index];
+  };
+
+  const records: NormalizedPositionSnapshotRow[] = [];
+  const errors: CsvParseError[] = extraction.unsupportedSections.length
+    ? [
+        {
+          row: 0,
+          message: `Sections IBKR ignorées: ${extraction.unsupportedSections.join(', ')}.`,
+        },
+      ]
+    : [];
+
+  for (let i = 0; i < extraction.section.dataRows.length; i += 1) {
+    const rawRow = extraction.section.dataRows[i] ?? [];
+    const rowIndex = i + 1;
+    const cells = buildStructuredRowCells(extraction.section.headers, rawRow);
+
+    const dateToken = getValue(rawRow, 'Date');
+    if (normalizeHeader(dateToken) === 'total') {
+      continue;
+    }
+    const date = dateToken ? parseDate(dateToken) : null;
+    const instrument = normalizeHeader(getValue(rawRow, 'FinancialInstrument'));
+    const sector = normalizeHeader(getValue(rawRow, 'Sector'));
+    const symbol = normalizeAssetSymbol(getValue(rawRow, 'Symbol'));
+    const assetName = normalizeAssetName(getValue(rawRow, 'Description'));
+    const currency = normalizeCurrency(getValue(rawRow, 'Currency')) ?? fallbackCurrency;
+    const qtyValue = parseFloatSafe(getValue(rawRow, 'Quantity'));
+    const priceValue = parseFloatSafe(getValue(rawRow, 'ClosePrice'));
+    const assetType = normalizeIbkrInstrumentType(getValue(rawRow, 'FinancialInstrument'));
+
+    if (
+      !symbol ||
+      date === null ||
+      qtyValue === null ||
+      qtyValue < 0 ||
+      !currency ||
+      (priceValue !== null && priceValue < 0)
+    ) {
+      const problems: string[] = [];
+      if (!symbol) problems.push('symbol absent');
+      if (date === null) problems.push('date invalide');
+      if (qtyValue === null || qtyValue < 0) problems.push('quantite invalide');
+      if (!currency) problems.push('devise invalide');
+      if (priceValue !== null && priceValue < 0) problems.push('prix invalide');
+      errors.push({
+        row: rowIndex,
+        message: `Ligne IBKR Open Position Summary ignorée: ${problems.join(', ')}.`,
+      });
+      continue;
+    }
+
+    if (
+      instrument === 'cash' ||
+      sector === 'cash' ||
+      symbol === currency ||
+      symbol === 'EUR' && instrument === 'cash'
+    ) {
+      continue;
+    }
+
+    records.push({
+      date: date,
+      platform: fallbackPlatform,
+      currency,
+      assetSymbol: symbol,
+      assetName: assetName || symbol,
+      assetType: assetType ?? 'STOCK',
+      qty: qtyValue,
+      price: priceValue ?? undefined,
+      note: cells.description || undefined,
+    });
+  }
+
+  return { records, errors };
+};
+
+export const parseRecognizedInvestmentCsv = (
+  csvText: string,
+  options?: ParseNormalizedTransactionsOptions & ParseNormalizedPositionSnapshotsOptions & {
+    fileName?: string;
+  },
+): RecognizedCsvParseResult => {
+  const detection = detectCsvSourceProfile(csvText, options?.fileName);
+  const defaultPlatform = options?.defaultPlatform ?? detection.platformName ?? undefined;
+  const unsupportedSections =
+    detection.sourceProfile === 'interactive_brokers'
+      ? extractInteractiveBrokersOpenPositionSummary(csvText).unsupportedSections
+      : [];
+
+  if (detection.sourceProfile === 'interactive_brokers') {
+    const result = parseInteractiveBrokersOpenPositionSummaryCsv(csvText, {
+      defaultCurrency: options?.defaultCurrency,
+      defaultPlatform,
+    });
+    return {
+      sourceProfile: detection.sourceProfile,
+      platformName: detection.platformName,
+      mode: 'monthly_positions',
+      records: result.records,
+      errors: result.errors,
+      unsupportedSections,
+    };
+  }
+
+  if (detection.sourceProfile === 'trading212' || detection.sourceProfile === 'revolut_stock') {
+    const result = parseNormalizedTransactionsCsv(csvText, {
+      defaultCurrency: options?.defaultCurrency,
+      defaultPlatform,
+      columnMapping: options?.columnMapping,
+    });
+
+    return {
+      sourceProfile: detection.sourceProfile,
+      platformName: detection.platformName,
+      mode: 'transactions',
+      records: result.records,
+      errors: result.errors,
+      unsupportedSections,
+    };
+  }
+
+  const transactionResult = parseNormalizedTransactionsCsv(csvText, {
+    defaultCurrency: options?.defaultCurrency,
+    defaultPlatform,
+    columnMapping: options?.columnMapping,
+  });
+  const snapshotResult = parseNormalizedPositionSnapshotsCsv(csvText, {
+    defaultCurrency: options?.defaultCurrency,
+    defaultPlatform,
+    columnMapping: options?.columnMapping,
+  });
+
+  const preferredResult =
+    transactionResult.records.length >= snapshotResult.records.length
+      ? {
+          mode: 'transactions' as const,
+          records: transactionResult.records,
+          errors: transactionResult.errors,
+        }
+      : {
+          mode: 'monthly_positions' as const,
+          records: snapshotResult.records,
+          errors: snapshotResult.errors,
+        };
+
+  return {
+    sourceProfile: detection.sourceProfile,
+    platformName: detection.platformName,
+    mode: preferredResult.mode,
+    records: preferredResult.records,
+    errors: preferredResult.errors,
+    unsupportedSections,
+  };
 };
 
 export const parseNormalizedTransactionsCsv = (

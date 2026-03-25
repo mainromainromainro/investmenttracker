@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { ImportJob } from '../types';
+import { ImportJob, ImportSourceProfile } from '../types';
 
 export const importJobRepository = {
   async getAll() {
@@ -13,6 +13,19 @@ export const importJobRepository = {
 
   async getByFingerprint(fileFingerprint: string) {
     return db.importJobs.where('fileFingerprint').equals(fileFingerprint).sortBy('importedAt');
+  },
+
+  async getBySourceProfile(sourceProfile: ImportSourceProfile) {
+    return db.importJobs.where('sourceProfile').equals(sourceProfile).sortBy('importedAt');
+  },
+
+  async getBySourceTemplateId(sourceTemplateId: string) {
+    return db.importJobs.where('sourceTemplateId').equals(sourceTemplateId).sortBy('importedAt');
+  },
+
+  async getLatestBySourceProfile(sourceProfile: ImportSourceProfile) {
+    const jobs = await this.getBySourceProfile(sourceProfile);
+    return jobs.length > 0 ? jobs[jobs.length - 1] : undefined;
   },
 
   async getLatestByFingerprint(fileFingerprint: string) {

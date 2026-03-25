@@ -92,6 +92,77 @@ describe('Investment computations', () => {
       expect(computePositionQty(transactions, 'a1', 'p1')).toBe(2);
       expect(computePositionQty(transactions, 'a1', 'p1', 'account_a')).toBe(3);
     });
+
+    it('should ignore deposits, withdrawals, dividends and fees when computing quantity', () => {
+      const transactions: Transaction[] = [
+        {
+          id: 'buy',
+          platformId: 'p1',
+          accountId: 'account_a',
+          assetId: 'a1',
+          kind: 'BUY',
+          date: 1,
+          qty: 10,
+          price: 100,
+          currency: 'EUR',
+          createdAt: 1,
+        },
+        {
+          id: 'deposit',
+          platformId: 'p1',
+          accountId: 'account_a',
+          kind: 'DEPOSIT',
+          date: 2,
+          currency: 'EUR',
+          createdAt: 2,
+        },
+        {
+          id: 'dividend',
+          platformId: 'p1',
+          accountId: 'account_a',
+          assetId: 'a1',
+          kind: 'DIVIDEND',
+          date: 3,
+          qty: 1.25,
+          currency: 'EUR',
+          createdAt: 3,
+        },
+        {
+          id: 'fee',
+          platformId: 'p1',
+          accountId: 'account_a',
+          assetId: 'a1',
+          kind: 'FEE',
+          date: 4,
+          fee: 0.75,
+          currency: 'EUR',
+          createdAt: 4,
+        },
+        {
+          id: 'withdraw',
+          platformId: 'p1',
+          accountId: 'account_a',
+          kind: 'WITHDRAW',
+          date: 5,
+          currency: 'EUR',
+          createdAt: 5,
+        },
+        {
+          id: 'sell',
+          platformId: 'p1',
+          accountId: 'account_a',
+          assetId: 'a1',
+          kind: 'SELL',
+          date: 6,
+          qty: 4,
+          price: 110,
+          currency: 'EUR',
+          createdAt: 6,
+        },
+      ];
+
+      expect(computePositionQty(transactions, 'a1', 'p1', 'account_a')).toBe(6);
+    });
   });
 
   describe('getLatestPrice', () => {

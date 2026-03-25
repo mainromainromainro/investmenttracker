@@ -4,6 +4,7 @@ import {
   NORMALIZED_TRANSACTION_HEADERS,
   parseNormalizedPositionSnapshotsCsv,
   parseNormalizedTransactionsCsv,
+  parseRecognizedInvestmentCsv,
   suggestCsvColumnMapping,
 } from './csvImport';
 
@@ -303,6 +304,30 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records).toHaveLength(1);
     expect(result.records[0]?.kind).toBe('BUY');
     expect(result.records[0]?.assetSymbol).toBe('NKE');
+  });
+
+  it('parses an IBKR open position summary as a holdings snapshot', () => {
+    const csv = buildCsv([
+      'Introduction,Header,Name,Account,Alias,BaseCurrency,AccountType,AnalysisPeriod,PerformanceMeasure',
+      'Introduction,Data,Romain Henrion,U17342113,,EUR,Individual,"March 25, 2025 to March 24, 2026 (Monthly)",TWR',
+      'Open Position Summary,MetaInfo,As Of,"March 24, 2026"',
+      'Open Position Summary,Header,Date,FinancialInstrument,Currency,Symbol,Description,Sector,Quantity,ClosePrice,Value,Cost Basis,UnrealizedP&L,FXRateToBase',
+      'Open Position Summary,Data,03/24/2026,ETFs,EUR,DCAM,AMUNDI PEA MONDE MSCI WORLD,Broad,477,5.303,2529.53,2594.640285,-65.110285,1',
+      'Open Position Summary,Data,03/24/2026,Cash,EUR,EUR,Euro,Cash,5.359715,1,5.359715,,,1',
+      'Trade Summary,Header,Financial Instrument,Currency,Symbol,Description,Sector,Quantity Bought,Average Price Bought,Proceeds Bought,Proceeds Bought in Base,Quantity Sold,Average Price Sold,Proceeds Sold,Proceeds Sold in Base',
+      'Trade Summary,Data,ETFs,Euro,DCAM,AMUNDI PEA MONDE MSCI WORLD,Broad,477,5.414375262,-2582.657,-2582.657,0,0,0,0',
+    ]);
+
+    const result = parseRecognizedInvestmentCsv(csv);
+
+    expect(result.sourceProfile).toBe('interactive_brokers');
+    expect(result.mode).toBe('monthly_positions');
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.assetSymbol).toBe('DCAM');
+    expect(result.records[0]?.qty).toBe(477);
+    expect(result.unsupportedSections).toContain('Introduction');
+    expect(result.unsupportedSections).toContain('Trade Summary');
+    expect(result.errors[0]?.message).toContain('Sections IBKR ignorées');
   });
 });
 

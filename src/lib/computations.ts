@@ -10,58 +10,12 @@ import {
   PortfolioHistoryPoint,
   TickerHolding,
 } from '../types';
-
-const buildPairKey = (assetId: string, platformId: string, accountId?: string) =>
-  `${assetId}:${platformId}:${accountId ?? '__platform__'}`;
-
-const buildSnapshotManagedPairSet = (transactions: Transaction[]): Set<string> => {
-  const pairs = new Set<string>();
-  for (const transaction of transactions) {
-    if (
-      transaction.assetId &&
-      transaction.source === 'POSITION_SNAPSHOT'
-    ) {
-      pairs.add(buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId));
-    }
-  }
-  return pairs;
-};
-
-const filterAuthoritativeTransactions = (
-  transactions: Transaction[],
-): Transaction[] => {
-  const snapshotManagedPairs = buildSnapshotManagedPairSet(transactions);
-  if (snapshotManagedPairs.size === 0) {
-    return transactions;
-  }
-
-  return transactions.filter((transaction) => {
-    if (!transaction.assetId) {
-      return true;
-    }
-    const pairKey = buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId);
-    if (!snapshotManagedPairs.has(pairKey)) {
-      return transaction.source !== 'POSITION_SNAPSHOT';
-    }
-    return transaction.source === 'POSITION_SNAPSHOT';
-  });
-};
-
-const getQuantityDelta = (transaction: Transaction): number => {
-  const qty = transaction.qty ?? 0;
-  switch (transaction.kind) {
-    case 'BUY':
-    case 'TRANSFER_IN':
-    case 'STAKING_REWARD':
-    case 'AIRDROP':
-      return qty;
-    case 'SELL':
-    case 'TRANSFER_OUT':
-      return -qty;
-    default:
-      return 0;
-  }
-};
+import {
+  computeHoldingQuantity,
+  computeHoldingsSummary,
+  filterAuthoritativeHoldingsTransactions,
+  getTransactionQuantityDelta,
+} from './holdings';
 
 const toEurAtDate = (
   amount: number | null,
@@ -190,14 +144,7 @@ export const computePositionQty = (
   platformId: string,
   accountId?: string,
 ): number => {
-  return transactions
-    .filter(
-      (t) =>
-        t.assetId === assetId &&
-        t.platformId === platformId &&
-        (accountId === undefined ? t.accountId === undefined : t.accountId === accountId)
-    )
-    .reduce((sum, t) => sum + getQuantityDelta(t), 0);
+  return computeHoldingQuantity(transactions, assetId, platformId, accountId);
 };
 
 /**
@@ -292,45 +239,26 @@ export const computePortfolioSummary = (
   platforms: Platform[],
   accounts: Account[] = [],
 ): PortfolioSummary => {
-  const authoritativeTransactions = filterAuthoritativeTransactions(transactions);
+  const authoritativeTransactions = filterAuthoritativeHoldingsTransactions(transactions);
+  const holdings = computeHoldingsSummary(transactions);
   const positions: Position[] = [];
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
   const accountMap = new Map(accounts.map((account) => [account.id, account]));
-  
-  // Group transactions by asset+platform+account
-  const assetPlatformMap = new Map<string, { assetId: string; platformId: string; accountId?: string }>();
-  
-  for (const tx of authoritativeTransactions) {
-    if (!tx.assetId) continue;
-    const key = buildPairKey(tx.assetId, tx.platformId, tx.accountId);
-    if (!assetPlatformMap.has(key)) {
-      assetPlatformMap.set(key, {
-        assetId: tx.assetId,
-        platformId: tx.platformId,
-        accountId: tx.accountId,
-      });
-    }
-  }
-  
-  // Compute position for each asset+platform combination
-  for (const [, { assetId, platformId, accountId }] of assetPlatformMap) {
-    const asset = assetMap.get(assetId);
-    const platform = platforms.find((p) => p.id === platformId);
-    const account = accountId ? accountMap.get(accountId) : undefined;
-    
+
+  // Compute position for each canonical holdings pair.
+  for (const holding of holdings.positions) {
+    const asset = assetMap.get(holding.assetId);
+    const platform = platforms.find((p) => p.id === holding.platformId);
+    const account = holding.accountId ? accountMap.get(holding.accountId) : undefined;
+
     if (!asset || !platform) continue;
-    
-    const pairTransactions = authoritativeTransactions.filter(
-      (transaction) =>
-        transaction.assetId === assetId &&
-        transaction.platformId === platformId &&
-        transaction.accountId === accountId,
-    );
-    const qty = computePositionQty(authoritativeTransactions, assetId, platformId, accountId);
+
+    const pairTransactions = holding.transactions;
+    const qty = holding.qty;
     if (Math.abs(qty) <= 1e-12 && pairTransactions.every((transaction) => transaction.kind !== 'DIVIDEND')) {
       continue;
     }
-    const latestPriceData = getLatestPrice(priceSnapshots, assetId);
+    const latestPriceData = getLatestPrice(priceSnapshots, holding.assetId);
     const valuationCurrency = latestPriceData?.currency ?? asset.currency;
     const fxRate = getLatestFxRate(fxSnapshots, valuationCurrency);
     const costState = computePositionCostState(pairTransactions, fxSnapshots);
@@ -352,9 +280,9 @@ export const computePortfolioSummary = (
         : null;
     
     positions.push({
-      assetId,
-      platformId,
-      accountId,
+      assetId: holding.assetId,
+      platformId: holding.platformId,
+      accountId: holding.accountId,
       asset,
       platform,
       account,
@@ -528,7 +456,7 @@ export const computePortfolioSummary = (
 
   // Build portfolio evolution over time from transactional and market dates.
   const datedTransactions = authoritativeTransactions
-    .filter((tx) => tx.assetId && (tx.kind === 'BUY' || tx.kind === 'SELL'))
+    .filter((tx) => tx.assetId && getTransactionQuantityDelta(tx) !== 0)
     .sort((a, b) => a.date - b.date);
   const timelineSet = new Set<number>();
   for (const tx of datedTransactions) timelineSet.add(tx.date);
@@ -545,8 +473,7 @@ export const computePortfolioSummary = (
       const tx = datedTransactions[txIndex];
       const assetId = tx.assetId!;
       const previousQty = qtyByAsset.get(assetId) ?? 0;
-      const delta =
-        getQuantityDelta(tx);
+      const delta = getTransactionQuantityDelta(tx);
       qtyByAsset.set(assetId, previousQty + delta);
       txIndex++;
     }

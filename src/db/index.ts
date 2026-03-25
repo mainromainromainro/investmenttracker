@@ -44,11 +44,26 @@ export class InvestmentTrackerDB extends Dexie {
       accounts: 'id, platformId, [platformId+name], type',
       assets: 'id',
       transactions: 'id, platformId, accountId, assetId, importJobId, date, [platformId+assetId], [accountId+assetId]',
-      priceSnapshots: 'id, assetId, importJobId, date',
+      priceSnapshots: 'id, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
       fxSnapshots: 'id, pair, date',
       importJobs: 'id, status, mode, sourceProfile, fileFingerprint, importedAt',
       importRows: 'id, importJobId, status, fingerprint, rowNumber',
       positionSnapshots: 'id, platformId, accountId, assetId, importJobId, date',
+    });
+    this.version(4).stores({
+      platforms: 'id',
+      accounts: 'id, platformId, [platformId+name], type',
+      assets: 'id',
+      transactions:
+        'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date, [platformId+assetId], [accountId+assetId]',
+      priceSnapshots: 'id, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
+      fxSnapshots: 'id, pair, date',
+      importJobs:
+        'id, status, mode, sourceProfile, sourceTemplateId, sourceSection, sourceSignature, fileFingerprint, importedAt',
+      importRows:
+        'id, importJobId, status, fingerprint, rowNumber, sourceProfile, sourceTemplateId, sourceSection, sourceTicker',
+      positionSnapshots:
+        'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
     });
   }
 }

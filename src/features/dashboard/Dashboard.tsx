@@ -7,10 +7,16 @@ import { useTransactionStore } from '../../stores/transactionStore';
 import { usePriceStore } from '../../stores/priceStore';
 import { useFxStore } from '../../stores/fxStore';
 import { computePortfolioSummary } from '../../lib/computations';
-import { PortfolioHistoryPoint, Position } from '../../types';
+import { PortfolioHistoryPoint, Position, TickerHolding } from '../../types';
 import { fetchFxRatesToEur, fetchLiveQuotes } from '../../lib/liveMarketData';
+import { sortHoldingsByQuantity } from './dashboardAnalytics';
 
 interface DisplayPosition extends Position {
+  id: string;
+  weightPct: number | null;
+}
+
+interface DisplayHolding extends TickerHolding {
   id: string;
   weightPct: number | null;
 }
@@ -412,6 +418,75 @@ const AllocationFocus: React.FC<{
   );
 };
 
+const HoldingsTable: React.FC<{
+  holdings: DisplayHolding[];
+}> = ({ holdings }) => (
+  <Panel
+    title="Holdings"
+    subtitle="Le tableau principal commence par la quantité détenue, puis la valeur et la performance."
+  >
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[820px] text-sm">
+        <thead className="bg-emerald-950/55 text-stone-200">
+          <tr>
+            <th className="px-6 py-3 text-left font-semibold">Ticker</th>
+            <th className="px-6 py-3 text-right font-semibold">Qté</th>
+            <th className="px-6 py-3 text-right font-semibold">Prix</th>
+            <th className="px-6 py-3 text-right font-semibold">Valeur</th>
+            <th className="px-6 py-3 text-right font-semibold">Perf</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-emerald-900/40">
+          {holdings.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-6 py-5 text-center text-stone-300">
+                Aucune holding pour le moment.
+              </td>
+            </tr>
+          ) : (
+            holdings.map((holding) => (
+              <tr key={holding.id} className="hover:bg-emerald-950/35">
+                <td className="px-6 py-4 text-stone-100">
+                  <div className="font-semibold text-white">{holding.asset.symbol}</div>
+                  <div className="text-xs text-stone-300">
+                    {holding.asset.name}
+                    {holding.qty !== 0 ? ` · ${holding.asset.type}` : ''}
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-right text-stone-100">{formatCompactQty(holding.qty)}</td>
+                <td className="px-6 py-4 text-right text-stone-100">
+                  {holding.latestPrice !== null
+                    ? `${holding.currency} ${holding.latestPrice.toFixed(2)}`
+                    : 'Prix manquant'}
+                </td>
+                <td className="px-6 py-4 text-right text-white">
+                  <div className="font-semibold">
+                    {holding.valueEUR !== null ? formatCurrency(holding.valueEUR) : 'Valorisation manquante'}
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-emerald-950/75">
+                    <div
+                      className="h-1.5 rounded-full bg-gradient-to-r from-amber-200 to-emerald-300"
+                      style={{ width: `${Math.max(4, (holding.weightPct ?? 0) * 100)}%` }}
+                    />
+                  </div>
+                </td>
+                <td className={`px-6 py-4 text-right font-semibold ${getValueTone(holding.unrealizedPnlEUR)}`}>
+                  <div>
+                    {holding.unrealizedPnlEUR !== null
+                      ? formatSignedCurrency(holding.unrealizedPnlEUR)
+                      : 'n/a'}
+                  </div>
+                  <div className="text-xs text-stone-300">{formatRatioPercent(holding.unrealizedPnlPct)}</div>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </Panel>
+);
+
 const PositionsTable: React.FC<{
   positions: DisplayPosition[];
   focusedId: string | null;
@@ -419,17 +494,16 @@ const PositionsTable: React.FC<{
 }> = ({ positions, focusedId, onFocus }) => (
   <Panel
     title="Positions"
-    subtitle="Toutes vos lignes, avec quantité, valeur actuelle et performance."
+    subtitle="Ventilation par plateforme, avec la quantité affichée avant la valorisation."
   >
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[880px] text-sm">
+      <table className="w-full min-w-[900px] text-sm">
         <thead className="bg-emerald-950/55 text-stone-200">
           <tr>
             <th className="px-6 py-3 text-left font-semibold">Actif</th>
-            <th className="px-6 py-3 text-left font-semibold">Plateforme</th>
             <th className="px-6 py-3 text-right font-semibold">Qté</th>
+            <th className="px-6 py-3 text-left font-semibold">Plateforme</th>
             <th className="px-6 py-3 text-right font-semibold">Prix</th>
-            <th className="px-6 py-3 text-right font-semibold">Investi</th>
             <th className="px-6 py-3 text-right font-semibold">Valeur</th>
             <th className="px-6 py-3 text-right font-semibold">Perf</th>
           </tr>
@@ -437,7 +511,7 @@ const PositionsTable: React.FC<{
         <tbody className="divide-y divide-emerald-900/40">
           {positions.length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-6 py-5 text-center text-stone-300">
+              <td colSpan={6} className="px-6 py-5 text-center text-stone-300">
                 Aucune position pour le moment.
               </td>
             </tr>
@@ -457,16 +531,13 @@ const PositionsTable: React.FC<{
                     <div className="font-semibold text-white">{position.asset.symbol}</div>
                     <div className="text-xs text-stone-300">{position.asset.name}</div>
                   </td>
+                  <td className="px-6 py-4 text-right text-stone-100">{formatCompactQty(position.qty)}</td>
                   <td className="px-6 py-4 text-stone-200">
                     <div>{position.platform.name}</div>
                     <div className="text-xs text-stone-300">{position.asset.type}</div>
                   </td>
-                  <td className="px-6 py-4 text-right text-stone-100">{formatCompactQty(position.qty)}</td>
                   <td className="px-6 py-4 text-right text-stone-100">
                     {position.latestPrice !== null ? `${position.currency} ${position.latestPrice.toFixed(2)}` : 'Prix manquant'}
-                  </td>
-                  <td className="px-6 py-4 text-right text-stone-100">
-                    {position.costBasisEUR !== null ? formatCurrency(position.costBasisEUR) : 'PRU manquant'}
                   </td>
                   <td className="px-6 py-4 text-right text-white">
                     <div className="font-semibold">
@@ -555,18 +626,24 @@ const Dashboard: React.FC = () => {
     [assets, transactions, prices, fxSnapshots, platforms],
   );
 
+  const holdings = useMemo<DisplayHolding[]>(() => {
+    const sortedHoldings = sortHoldingsByQuantity(summary.byTicker);
+    const knownValueTotal = sortedHoldings.reduce((sum, holding) => sum + (holding.valueEUR ?? 0), 0);
+
+    return sortedHoldings.map((holding) => ({
+      ...holding,
+      id: holding.assetId,
+      weightPct:
+        holding.valueEUR !== null && knownValueTotal > 0
+          ? holding.valueEUR / knownValueTotal
+          : null,
+    }));
+  }, [summary.byTicker]);
+
   const positions = useMemo<DisplayPosition[]>(() => {
-    const activePositions = summary.positions
+    const activePositions = sortHoldingsByQuantity(summary.positions)
       .filter((position) => Math.abs(position.qty) > 1e-12)
-      .slice()
-      .sort((left, right) => {
-        const leftValue = left.valueEUR ?? -Infinity;
-        const rightValue = right.valueEUR ?? -Infinity;
-        if (leftValue === rightValue) {
-          return left.asset.symbol.localeCompare(right.asset.symbol);
-        }
-        return rightValue - leftValue;
-      });
+      .slice();
 
     const knownValueTotal = activePositions.reduce((sum, position) => sum + (position.valueEUR ?? 0), 0);
     return activePositions.map((position) => ({
@@ -585,40 +662,40 @@ const Dashboard: React.FC = () => {
     }
   }, [focusedId, positions]);
 
-  const valuedPositionsCount = positions.filter((position) => position.valueEUR !== null).length;
-  const missingValuationCount = positions.length - valuedPositionsCount;
-  const missingCostBasisCount = positions.filter((position) => position.costBasisEUR === null).length;
-  const knownValueTotal = positions.reduce((sum, position) => sum + (position.valueEUR ?? 0), 0);
-  const knownCostBasisTotal = positions.reduce((sum, position) => sum + (position.costBasisEUR ?? 0), 0);
-  const knownPerformanceTotal = positions.reduce((sum, position) => sum + (position.unrealizedPnlEUR ?? 0), 0);
+  const valuedHoldingsCount = holdings.filter((holding) => holding.valueEUR !== null).length;
+  const missingValuationCount = holdings.length - valuedHoldingsCount;
+  const missingCostBasisCount = holdings.filter((holding) => holding.costBasisEUR === null).length;
+  const knownValueTotal = holdings.reduce((sum, holding) => sum + (holding.valueEUR ?? 0), 0);
+  const knownCostBasisTotal = holdings.reduce((sum, holding) => sum + (holding.costBasisEUR ?? 0), 0);
+  const knownPerformanceTotal = holdings.reduce((sum, holding) => sum + (holding.unrealizedPnlEUR ?? 0), 0);
   const completeValuation = missingValuationCount === 0;
   const completeCostBasis = missingCostBasisCount === 0;
   const completePerformance =
-    completeValuation && completeCostBasis && positions.every((position) => position.unrealizedPnlEUR !== null);
-  const coveragePct = positions.length === 0 ? 0 : Math.round((valuedPositionsCount / positions.length) * 100);
+    completeValuation && completeCostBasis && holdings.every((holding) => holding.unrealizedPnlEUR !== null);
+  const coveragePct = holdings.length === 0 ? 0 : Math.round((valuedHoldingsCount / holdings.length) * 100);
 
   const allocationSlices = useMemo<AllocationSlice[]>(() => {
-    const valuedPositions = positions.filter(
-      (position): position is DisplayPosition & { valueEUR: number } =>
-        position.valueEUR !== null && position.valueEUR > 0,
+    const valuedHoldings = holdings.filter(
+      (holding): holding is DisplayHolding & { valueEUR: number } =>
+        holding.valueEUR !== null && holding.valueEUR > 0,
     );
-    if (valuedPositions.length === 0 || knownValueTotal <= 0) {
+    if (valuedHoldings.length === 0 || knownValueTotal <= 0) {
       return [];
     }
 
-    const topPositions = valuedPositions.slice(0, 6);
-    const topValue = topPositions.reduce((sum, position) => sum + position.valueEUR, 0);
-    const slices = topPositions.map((position, index) => ({
-      id: position.id,
-      label: position.asset.symbol,
-      subtitle: `${position.platform.name} · ${position.asset.type}`,
-      valueEUR: position.valueEUR,
-      pct: position.valueEUR / knownValueTotal,
+    const topHoldings = valuedHoldings.slice(0, 6);
+    const topValue = topHoldings.reduce((sum, holding) => sum + holding.valueEUR, 0);
+    const slices: AllocationSlice[] = topHoldings.map((holding, index) => ({
+      id: holding.id,
+      label: holding.asset.symbol,
+      subtitle: holding.asset.type,
+      valueEUR: holding.valueEUR,
+      pct: holding.valueEUR / knownValueTotal,
       color: ALLOCATION_COLORS[index % ALLOCATION_COLORS.length],
     }));
 
     const otherValue = Math.max(0, knownValueTotal - topValue);
-    const otherCount = valuedPositions.length - topPositions.length;
+    const otherCount = valuedHoldings.length - topHoldings.length;
     if (otherCount > 0 && otherValue > 0.01) {
       slices.push({
         id: '__other__',
@@ -631,7 +708,7 @@ const Dashboard: React.FC = () => {
     }
 
     return slices;
-  }, [knownValueTotal, positions]);
+  }, [knownValueTotal, holdings]);
 
   const handleSyncLiveData = async () => {
     if (!assets.length || syncing) return;
@@ -709,7 +786,7 @@ const Dashboard: React.FC = () => {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <PageHeading
             title="Dashboard"
-            subtitle="Vos positions, leur valeur actuelle et leur évolution."
+            subtitle="Vos holdings, leurs quantités et leur valeur actuelle."
           />
           <button
             type="button"
@@ -730,11 +807,11 @@ const Dashboard: React.FC = () => {
         <div className="rounded-3xl border border-[#d6dccd] bg-gradient-to-br from-[#f7f2e8] via-[#eef3e8] to-[#dce7d8] p-8 text-center shadow-[0_24px_60px_rgba(88,102,74,0.12)]">
           <p className="text-xs uppercase tracking-[0.26em] text-[#71806f]">Vue simple</p>
           <h2 className="mt-3 text-3xl font-semibold text-[#173326]">
-            Le dashboard affichera ici vos positions, leur valeur et leur évolution.
+            Le dashboard affichera ici vos quantités détenues, puis leur valeur et leur évolution.
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-[#607060]">
-            Commencez par importer un CSV. Ensuite l’accueil se limitera à l’essentiel: les lignes ouvertes,
-            la valeur actuelle du portefeuille et quelques graphiques interactifs.
+            Commencez par importer un CSV. Ensuite l’accueil se limitera à l’essentiel: les holdings
+            nettes, la valeur actuelle du portefeuille et quelques graphiques interactifs.
           </p>
           <div className="mt-6">
             <Link
@@ -754,7 +831,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <PageHeading
           title="Dashboard"
-          subtitle="Vos positions, leur valeur actuelle et leur évolution."
+          subtitle="Vos holdings, leurs quantités et leur valeur actuelle."
         />
         <button
           type="button"
@@ -782,20 +859,20 @@ const Dashboard: React.FC = () => {
         <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
           <div>
             <p className="text-xs uppercase tracking-[0.26em] text-stone-300">Vue simple</p>
-            <h2 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">
-              Voir rapidement ce que vous détenez et combien ça vaut.
+          <h2 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">
+              Voir d’abord ce que vous détenez, puis sa valeur.
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-200">
-              L’accueil est recentré sur l’essentiel: les positions ouvertes, la valeur actuelle,
-              le capital investi et une lecture visuelle de l’évolution du portefeuille.
+              L’accueil est recentré sur l’essentiel: les holdings nettes, leurs quantités, puis la
+              valeur actuelle et l’évolution du portefeuille.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3 text-xs text-stone-200">
               <span className="rounded-full border border-stone-200/15 bg-black/10 px-3 py-1.5">
-                {positions.length} position{positions.length > 1 ? 's' : ''} ouverte{positions.length > 1 ? 's' : ''}
+                {holdings.length} holding{holdings.length > 1 ? 's' : ''}
               </span>
               <span className="rounded-full border border-stone-200/15 bg-black/10 px-3 py-1.5">
-                {summary.byPlatform.length} plateforme{summary.byPlatform.length > 1 ? 's' : ''}
+                {positions.length} position{positions.length > 1 ? 's' : ''}
               </span>
               <span className="rounded-full border border-stone-200/15 bg-black/10 px-3 py-1.5">
                 {coveragePct}% valorisé
@@ -814,7 +891,19 @@ const Dashboard: React.FC = () => {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
+            <StatTile
+              label="Holdings nets"
+              value={`${holdings.length}`}
+              helper="Le point de départ du dashboard: les tickers et leurs quantités."
+              tone="neutral"
+            />
+            <StatTile
+              label="Positions détaillées"
+              value={`${positions.length}`}
+              helper="Ventilation par plateforme et compte, affichée après la couche holdings."
+              tone="neutral"
+            />
             <StatTile
               label="Valeur actuelle"
               value={formatCurrency(completeValuation && summary.totalValueEUR !== null ? summary.totalValueEUR : knownValueTotal)}
@@ -849,6 +938,13 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      <HoldingsTable holdings={holdings} />
+      <PositionsTable
+        positions={positions}
+        focusedId={focusedId}
+        onFocus={setFocusedId}
+      />
+
       <div className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
         <PortfolioEvolutionChart history={summary.history} />
         <AllocationFocus
@@ -857,12 +953,6 @@ const Dashboard: React.FC = () => {
           onFocus={setFocusedId}
         />
       </div>
-
-      <PositionsTable
-        positions={positions}
-        focusedId={focusedId}
-        onFocus={setFocusedId}
-      />
     </div>
   );
 };

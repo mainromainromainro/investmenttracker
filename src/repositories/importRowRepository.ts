@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { ImportRow } from '../types';
+import { ImportRow, ImportSourceProfile } from '../types';
 
 export const importRowRepository = {
   async getAll() {
@@ -8,6 +8,14 @@ export const importRowRepository = {
 
   async getByImportJobId(importJobId: string) {
     return db.importRows.where('importJobId').equals(importJobId).sortBy('rowNumber');
+  },
+
+  async getBySourceProfile(sourceProfile: ImportSourceProfile) {
+    return db.importRows.where('sourceProfile').equals(sourceProfile).sortBy('rowNumber');
+  },
+
+  async getBySourceTemplateId(sourceTemplateId: string) {
+    return db.importRows.where('sourceTemplateId').equals(sourceTemplateId).sortBy('rowNumber');
   },
 
   async create(importRow: Omit<ImportRow, 'createdAt'>) {
