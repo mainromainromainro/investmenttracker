@@ -38,6 +38,7 @@ export interface NormalizedTransactionRow {
   date: number;
   platform: string;
   kind: TransactionKind;
+  sourceOrderType?: string;
   currency: string; // Asset / price currency
   cashCurrency?: string; // Settlement currency if different
   assetSymbol?: string;
@@ -354,7 +355,10 @@ const KIND_ALIASES: Record<string, TransactionKind> = {
   purchase: 'BUY',
   marketbuy: 'BUY',
   buymarket: 'BUY',
+  buylimit: 'BUY',
   limitbuy: 'BUY',
+  buystop: 'BUY',
+  stopbuy: 'BUY',
   achat: 'BUY',
   acquired: 'BUY',
   bought: 'BUY',
@@ -362,7 +366,11 @@ const KIND_ALIASES: Record<string, TransactionKind> = {
   sell: 'SELL',
   marketsell: 'SELL',
   sellmarket: 'SELL',
+  selllimit: 'SELL',
   limitsell: 'SELL',
+  sellstop: 'SELL',
+  stopsell: 'SELL',
+  stoploss: 'SELL',
   vente: 'SELL',
   sold: 'SELL',
   s: 'SELL',
@@ -1334,6 +1342,7 @@ export const parseNormalizedTransactionsCsv = (
     }
     const cashCurrency = providedCashCurrency ?? currency;
 
+    const sourceOrderType = cells.kind?.trim() || undefined;
     const kind = normalizeKind(cells.kind);
     if (!kind) {
       rowErrors.push(
@@ -1413,6 +1422,7 @@ export const parseNormalizedTransactionsCsv = (
       date: date!,
       platform: platform!,
       kind: kind!,
+      sourceOrderType,
       currency: currency!,
       cashCurrency,
       assetSymbol: pickDisplayAssetSymbol(assetSymbol, brokerSymbol, assetIsin),

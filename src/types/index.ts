@@ -60,6 +60,7 @@ export interface ImportSourceAuditFields {
   sourceSection?: string;
   sourceSignature?: string;
   sourceRowRef?: string;
+  sourceOrderType?: string;
   sourceTicker?: string;
   sourceBrokerSymbol?: string;
   sourceExchange?: string;

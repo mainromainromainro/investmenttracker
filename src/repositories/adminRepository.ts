@@ -174,6 +174,7 @@ const buildSourceContext = (
     sourceSection?: string;
     sourceSignature?: string;
     sourceRowRef?: string;
+    sourceOrderType?: string;
     assetSymbol?: string;
     assetIsin?: string;
     brokerSymbol?: string;
@@ -192,6 +193,7 @@ const buildSourceContext = (
   sourceSection: row.sourceSection ?? options?.sourceContext?.sourceSection,
   sourceSignature: row.sourceSignature ?? options?.sourceContext?.sourceSignature,
   sourceRowRef: row.sourceRowRef ?? options?.sourceContext?.sourceRowRef,
+  sourceOrderType: row.sourceOrderType ?? options?.sourceContext?.sourceOrderType,
   sourceTicker: row.assetSymbol,
   sourceBrokerSymbol: row.brokerSymbol,
   sourceExchange: row.exchange,
@@ -213,6 +215,7 @@ const buildBatchSourceContext = (
   sourceSection: options?.sourceContext?.sourceSection,
   sourceSignature: options?.sourceContext?.sourceSignature,
   sourceRowRef: options?.sourceContext?.sourceRowRef,
+  sourceOrderType: options?.sourceContext?.sourceOrderType,
   sourceBrokerSymbol: options?.sourceContext?.sourceBrokerSymbol,
   sourceExchange: options?.sourceContext?.sourceExchange,
   sourceIsin: options?.sourceContext?.sourceIsin,
@@ -234,6 +237,7 @@ const buildSnapshotSourceContext = (
   sourceSection: snapshot.sourceSection ?? options?.sourceContext?.sourceSection,
   sourceSignature: snapshot.sourceSignature ?? options?.sourceContext?.sourceSignature,
   sourceRowRef: snapshot.sourceRowRef ?? options?.sourceContext?.sourceRowRef,
+  sourceOrderType: snapshot.sourceOrderType ?? options?.sourceContext?.sourceOrderType,
   sourceTicker: snapshot.sourceTicker,
   sourceBrokerSymbol:
     snapshot.sourceBrokerSymbol ?? options?.sourceContext?.sourceBrokerSymbol,

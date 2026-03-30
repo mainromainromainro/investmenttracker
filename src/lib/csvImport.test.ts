@@ -287,8 +287,57 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records[0]?.assetSymbol).toBe('NKE');
     expect(result.records[0]?.price).toBeCloseTo(0.17, 2);
     expect(result.records[1]?.kind).toBe('BUY');
+    expect(result.records[1]?.sourceOrderType).toBe('BUY - MARKET');
     expect(result.records[1]?.qty).toBeCloseTo(0.04872107, 8);
     expect(result.records[1]?.price).toBeCloseTo(82.1, 2);
+  });
+
+  it('accepts executed limit and stop order variants and normalizes them to BUY or SELL', () => {
+    const csv = buildCsv([
+      'date,platform,kind,asset_symbol,qty,price,currency',
+      '2025-03-01,Interactive Brokers,Limit Buy,MSFT,2,410,USD',
+      '2025-03-02,Interactive Brokers,Buy Limit,MSFT,2,411,USD',
+      '2025-03-03,Interactive Brokers,Limit Sell,MSFT,1,420,USD',
+      '2025-03-04,Interactive Brokers,Sell Limit,MSFT,1,421,USD',
+      '2025-03-05,Interactive Brokers,Stop Buy,MSFT,2,430,USD',
+      '2025-03-06,Interactive Brokers,Buy Stop,MSFT,2,431,USD',
+      '2025-03-07,Interactive Brokers,Stop Sell,MSFT,1,390,USD',
+      '2025-03-08,Interactive Brokers,Sell Stop,MSFT,1,389,USD',
+      '2025-03-09,Interactive Brokers,Stop Loss,MSFT,1,380,USD',
+      '2025-03-10,Interactive Brokers,stop-loss,MSFT,1,379,USD',
+      '2025-03-11,Interactive Brokers,STOP_LOSS,MSFT,1,378,USD',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records).toHaveLength(11);
+    expect(result.records.map((record) => record.kind)).toEqual([
+      'BUY',
+      'BUY',
+      'SELL',
+      'SELL',
+      'BUY',
+      'BUY',
+      'SELL',
+      'SELL',
+      'SELL',
+      'SELL',
+      'SELL',
+    ]);
+    expect(result.records.map((record) => record.sourceOrderType)).toEqual([
+      'Limit Buy',
+      'Buy Limit',
+      'Limit Sell',
+      'Sell Limit',
+      'Stop Buy',
+      'Buy Stop',
+      'Stop Sell',
+      'Sell Stop',
+      'Stop Loss',
+      'stop-loss',
+      'STOP_LOSS',
+    ]);
   });
 
   it('annotates a recognized Trading 212 import with adapter metadata and native source row refs', () => {
