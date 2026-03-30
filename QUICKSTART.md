@@ -17,7 +17,8 @@ Application Vite par défaut: `http://localhost:5173`
 ### 1. Vérifier la surface réelle
 
 - `/` -> dashboard
-- `/settings` -> import, clé Twelve Data, seed, reset
+- `/import` -> import CSV
+- `/settings` -> clé Twelve Data, seed, reset
 
 Les autres routes redirigent actuellement vers `/settings`.
 
@@ -26,7 +27,7 @@ Les autres routes redirigent actuellement vers `/settings`.
 Deux options simples:
 
 - `Réglages -> Ajouter des données de test`
-- ou importer un CSV dans `Réglages -> CsvImportSection`
+- ou importer un CSV dans `/import`
 
 ### 3. Contrôler la valorisation
 

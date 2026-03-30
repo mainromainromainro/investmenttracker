@@ -4,10 +4,11 @@ Mise à jour: 2026-03-30
 
 ## TL;DR
 
-Le dépôt contient un tracker de portefeuille offline-first dont la surface utilisateur actuelle est volontairement resserrée autour de deux écrans:
+Le dépôt contient un tracker de portefeuille offline-first dont la surface utilisateur actuelle est volontairement resserrée autour de trois écrans:
 
 - `Dashboard` pour la lecture et le refresh live
-- `Réglages` pour l'import CSV, la configuration Twelve Data, le seed et le reset local
+- `Import CSV` pour l'ingestion
+- `Réglages` pour la configuration Twelve Data, le seed et le reset local
 
 Le cœur métier n'est pas le CRUD historique mais le pipeline d'import:
 
@@ -23,9 +24,9 @@ Le cœur métier n'est pas le CRUD historique mais le pipeline d'import:
 
 ### Runtime exposé
 
-- routes actives: `/`, `/settings`
+- routes actives: `/`, `/import`, `/settings`
 - anciennes routes CRUD conservées mais redirigées
-- import intégré à `Settings`, plus de page d'import dédiée
+- import exposé via une page dédiée plus simple
 
 ### Persistance
 
@@ -74,4 +75,4 @@ En pratique, tout changement dans l'import ou les holdings doit être évalué c
 1. Lire [README.md](README.md), puis [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md).
 2. Vérifier les fichiers modifiés dans `src/lib`, `src/repositories/adminRepository.ts`, `src/types/index.ts`.
 3. Exécuter `npm run test -- --run` avant toute évolution sur le pipeline d'import.
-4. Considérer `Dashboard + Settings + import pipeline` comme la surface produit prioritaire.
+4. Considérer `Dashboard + Import CSV + Settings` comme la surface produit prioritaire.

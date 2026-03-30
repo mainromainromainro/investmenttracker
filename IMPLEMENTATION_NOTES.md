@@ -18,6 +18,7 @@ Le projet n'est plus structuré comme un CRUD de démonstration. Le flux critiqu
 ### UI active
 
 - [src/features/dashboard/Dashboard.tsx](src/features/dashboard/Dashboard.tsx)
+- [src/features/import/ImportPage.tsx](src/features/import/ImportPage.tsx)
 - [src/features/settings/Settings.tsx](src/features/settings/Settings.tsx)
 - [src/features/import/CsvImportSection.tsx](src/features/import/CsvImportSection.tsx)
 

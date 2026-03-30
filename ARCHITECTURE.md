@@ -6,7 +6,7 @@ Mise à jour: 2026-03-30
 
 ```text
 Utilisateur
-  -> Dashboard / Settings
+  -> Dashboard / Import / Settings
     -> Stores Zustand
       -> Repositories
         -> Dexie / IndexedDB
@@ -24,10 +24,8 @@ Import CSV
 ### Pages actives
 
 - [src/features/dashboard/Dashboard.tsx](src/features/dashboard/Dashboard.tsx)
+- [src/features/import/ImportPage.tsx](src/features/import/ImportPage.tsx)
 - [src/features/settings/Settings.tsx](src/features/settings/Settings.tsx)
-
-### Module d'import actif
-
 - [src/features/import/CsvImportSection.tsx](src/features/import/CsvImportSection.tsx)
 
 ### Routes héritées

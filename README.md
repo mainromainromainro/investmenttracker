@@ -7,7 +7,8 @@ Investment Tracker est un portefeuille d'investissement local-first construit av
 Le produit n'est plus un simple CRUD multi-pages. L'usage réel du workspace est aujourd'hui centré sur:
 
 - un `Dashboard` de synthèse
-- une page `Réglages` qui concentre l'import CSV, la configuration live Twelve Data et les outils d'administration locale
+- une page `Import CSV` dédiée à l'ingestion
+- une page `Réglages` pour la configuration live Twelve Data et les outils d'administration locale
 - un pipeline d'import orienté audit, déduplication et résolution d'actifs
 
 ## Vue d'ensemble actuelle
@@ -15,8 +16,9 @@ Le produit n'est plus un simple CRUD multi-pages. L'usage réel du workspace est
 ### Surface UI réellement exposée
 
 - `/` -> `Dashboard`
+- `/import` -> page dédiée d'import CSV
 - `/settings` -> `Réglages`
-- `/import`, `/assets`, `/platforms`, `/accounts`, `/transactions`, `/prices`, `/fx` -> redirection vers `/settings`
+- `/assets`, `/platforms`, `/accounts`, `/transactions`, `/prices`, `/fx` -> redirection vers `/settings`
 
 Les anciens écrans CRUD existent encore dans `src/features/*`, mais ils ne sont plus câblés dans le routeur principal. Ils servent surtout de base de travail ou de modules hérités.
 

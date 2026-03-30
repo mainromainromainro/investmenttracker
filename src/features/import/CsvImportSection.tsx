@@ -525,29 +525,22 @@ const CsvImportSection: React.FC = () => {
   const ignoredErrors = activeCandidate?.errors ?? [];
   const canImport = status === 'ready' && Boolean(activeCandidate?.rows.length);
   const sourcePreset = parsedImport?.detectedPreset ?? null;
-  const supportLabel = parsedImport ? getImportSupportLabel(parsedImport.supportStatus) : 'Auto';
   const activeModeLabel = getImportModeLabel(selectedMode);
+  const activeRowLabel =
+    preview?.mode === 'transactions' ? 'transaction(s)' : 'position(s)';
+  const compactNote = parsedImport?.supportNotes.find((note) => note.trim()) ?? null;
 
   return (
     <section className="rounded-[30px] border border-[#e8d6ac]/18 bg-[#0f2d20]/88 p-6 shadow-[0_30px_70px_rgba(5,18,12,0.35)] backdrop-blur">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-[#c8b788]">Import CSV</p>
-          <h3 className="mt-2 text-2xl font-semibold text-[#f7f2e5] sm:text-3xl">
-            Le fichier est d’abord revu, puis seulement les lignes validées partent dans le suivi.
-          </h3>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-[#c7d1c1]">
-            On veut voir la source détectée, le mode retenu, les sections supportées et les lignes
-            ignorées ou rejetées avant d’importer.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs text-[#eadbbb]">
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Revue</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Quantités</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Holdings</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Support partiel</span>
-          <span className="rounded-full border border-[#e8d6ac]/18 bg-[#173b2a] px-3 py-1.5">Audit</span>
-        </div>
+      <div className="max-w-3xl">
+        <p className="text-xs uppercase tracking-[0.28em] text-[#c8b788]">Import CSV</p>
+        <h3 className="mt-2 text-2xl font-semibold text-[#f7f2e5] sm:text-3xl">
+          Dépose un fichier, vérifie les lignes reconnues, puis importe.
+        </h3>
+        <p className="mt-3 text-sm leading-6 text-[#c7d1c1]">
+          L’objectif ici est simple: confirmer qu’on reconnaît bien les transactions ou positions
+          utiles avant d’écrire dans le portefeuille.
+        </p>
       </div>
 
       <div
@@ -581,7 +574,7 @@ const CsvImportSection: React.FC = () => {
                 {selectedFile ? 'Remplacer le CSV actuel' : 'Déposer un CSV'}
               </p>
               <p className="mt-1 text-sm text-[#c7d1c1]">
-                Si la plateforme manque dans le fichier, on prend celle que tu choisis juste en dessous.
+                Si la plateforme manque dans le fichier, on reprend celle indiquée juste en dessous.
               </p>
             </div>
             <div className="inline-flex rounded-full bg-[#e6d2a5] px-4 py-2 text-sm font-semibold text-[#173326]">
@@ -591,7 +584,7 @@ const CsvImportSection: React.FC = () => {
         </label>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
         <label className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
           <span className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Plateforme si absente</span>
           <input
@@ -612,99 +605,29 @@ const CsvImportSection: React.FC = () => {
         </label>
       </div>
 
-      {parsedImport && (
-        <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-5 text-sm text-[#d5dccf]">
-            <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Source détectée</p>
-            <div className="mt-3 space-y-2">
-              <p className="text-lg font-semibold text-[#f7f2e5]">
-                {sourcePreset?.label ?? 'Source non reconnue'}
-              </p>
-              <p className="text-sm text-[#c7d1c1]">
-                Support: <span className="font-semibold text-[#f7f2e5]">{supportLabel}</span>
-              </p>
-              <p className="text-sm text-[#c7d1c1]">
-                Mode conseillé: <span className="font-semibold text-[#f7f2e5]">{getImportModeLabel(parsedImport.recommendedMode)}</span>
-              </p>
-              {parsedImport.sourceSection ? (
-                <p className="text-sm text-[#c7d1c1]">
-                  Section retenue: {parsedImport.sourceSection}
-                </p>
-              ) : null}
-              {sourcePreset?.supportedSections.length ? (
-                <p className="text-sm text-[#c7d1c1]">
-                  Sections supportées: {sourcePreset.supportedSections.join(', ')}
-                </p>
-              ) : null}
-              {parsedImport.sourceSignature ? (
-                <p className="text-sm text-[#c7d1c1]">
-                  Signature source:{' '}
-                  <span className="font-mono text-xs text-[#f7f2e5]">
-                    {parsedImport.sourceSignature}
-                  </span>
-                </p>
-              ) : null}
-            </div>
-
-            {parsedImport.supportNotes.length > 0 && (
-              <div className="mt-4 rounded-2xl border border-[#e8d6ac]/12 bg-[#103123] px-4 py-3 text-xs leading-5 text-[#eadbbb]">
-                {parsedImport.supportNotes.map((note) => (
-                  <p key={note}>{note}</p>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-5 text-sm text-[#d5dccf]">
-            <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Mode de revue</p>
-            <div className="mt-3 flex flex-wrap gap-3">
-              {(['transactions', 'monthly_positions'] as ParsedImportMode[]).map((mode) => {
-                const candidate = mode === 'transactions' ? parsedImport.transactions : parsedImport.monthlyPositions;
-                const isActive = selectedMode === mode;
-                const isDisabled = candidate.rows.length === 0;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setSelectedMode(mode)}
-                    disabled={isDisabled}
-                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                      isActive
-                        ? 'border-[#e6d2a5] bg-[#e6d2a5] text-[#173326]'
-                        : 'border-[#e8d6ac]/20 bg-[#0f2d20] text-[#f7f2e5] hover:bg-[#183a2b]'
-                    } disabled:cursor-not-allowed disabled:opacity-40`}
-                  >
-                    {getImportModeLabel(mode)}
-                    <span className="ml-2 text-xs opacity-80">({candidate.rows.length})</span>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-4 text-xs leading-5 text-[#c7d1c1]">
-              {selectedMode === parsedImport.recommendedMode
-                ? 'Le mode affiché correspond au mode conseillé.'
-                : 'Le mode affiché a été modifié manuellement. Vérifie l’aperçu avant d’importer.'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {selectedFile && (
-        <div className="mt-5 grid gap-3 rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/72 p-4 text-sm text-[#d5dccf] md:grid-cols-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Fichier</p>
-            <p className="mt-1 font-medium text-[#f7f2e5]">{selectedFile.name}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Taille</p>
-            <p className="mt-1 font-medium text-[#f7f2e5]">{formatFileSize(selectedFile.size)}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Modifié</p>
-            <p className="mt-1 font-medium text-[#f7f2e5]">
-              {formatLongDateTime(selectedFile.lastModified)}
-            </p>
-          </div>
+      {availableModes.length > 1 && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <span className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Mode</span>
+          {availableModes.map((mode) => {
+            const candidate =
+              mode === 'transactions' ? parsedImport?.transactions : parsedImport?.monthlyPositions;
+            const isActive = selectedMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setSelectedMode(mode)}
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                  isActive
+                    ? 'border-[#e6d2a5] bg-[#e6d2a5] text-[#173326]'
+                    : 'border-[#e8d6ac]/20 bg-[#143525]/78 text-[#f7f2e5] hover:bg-[#183a2b]'
+                }`}
+              >
+                {getImportModeLabel(mode)}
+                <span className="ml-2 text-xs opacity-80">({candidate?.rows.length ?? 0})</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -721,138 +644,87 @@ const CsvImportSection: React.FC = () => {
       )}
 
       {preview && (
-        <div className="mt-5 space-y-5">
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Source</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">
-                {sourcePreset?.label ?? 'CSV'}
-              </p>
+        <div className="mt-5 overflow-hidden rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78">
+          <div className="border-b border-[#e8d6ac]/12 px-5 py-4">
+            <div className="flex flex-wrap gap-2 text-xs text-[#eadbbb]">
+              <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                {selectedFile?.name ?? 'CSV'}
+              </span>
+              <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                {sourcePreset?.label ?? 'Source non reconnue'}
+              </span>
+              <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                {activeModeLabel}
+              </span>
+              <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                {preview.rowCount} {activeRowLabel}
+              </span>
+              {selectedFile ? (
+                <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                  {formatFileSize(selectedFile.size)}
+                </span>
+              ) : null}
+              {preview.ignoredCount > 0 ? (
+                <span className="rounded-full border border-[#e8d6ac]/16 bg-[#103123] px-3 py-1.5">
+                  {preview.ignoredCount} ignorée(s)
+                </span>
+              ) : null}
             </div>
-            <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Mode</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{activeModeLabel}</p>
-            </div>
-            <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Lignes retenues</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{preview.rowCount}</p>
-            </div>
-            <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[#c8b788]">Ignorées</p>
-              <p className="mt-2 text-xl font-semibold text-[#f7f2e5]">{preview.ignoredCount}</p>
-            </div>
+            <p className="mt-3 text-sm text-[#c7d1c1]">
+              {formatShortDate(preview.startDate)} → {formatShortDate(preview.endDate)}
+              {' · '}
+              {preview.platformCount} plateforme(s)
+              {' · '}
+              {preview.assetCount} actif(s)
+              {' · '}
+              {preview.currencies.join(', ')}
+            </p>
+            {compactNote ? <p className="mt-2 text-sm text-[#d9c89f]">{compactNote}</p> : null}
           </div>
-
-          <div className="grid gap-4 lg:grid-cols-[0.72fr_1.28fr]">
-            <div className="rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78 p-5 text-sm">
-              <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Résumé</p>
-              <dl className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-[#c7d1c1]">Période</dt>
-                  <dd className="font-medium text-[#f7f2e5]">
-                    {formatShortDate(preview.startDate)} → {formatShortDate(preview.endDate)}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-[#c7d1c1]">Devises</dt>
-                  <dd className="font-medium text-[#f7f2e5]">{preview.currencies.join(', ')}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-[#c7d1c1]">Plateformes</dt>
-                  <dd className="font-medium text-[#f7f2e5]">{preview.platformCount}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-[#c7d1c1]">Actifs</dt>
-                  <dd className="font-medium text-[#f7f2e5]">{preview.assetCount}</dd>
-                </div>
-                {previewStats && (
-                  <>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-[#c7d1c1]">Doublons détectés</dt>
-                      <dd className="font-medium text-[#f7f2e5]">{previewStats.duplicateRowCount}</dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-[#c7d1c1]">Mapping requis</dt>
-                      <dd className="font-medium text-[#f7f2e5]">
-                        {Math.round(previewStats.requiredMappingCoverage * 100)}%
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-[#c7d1c1]">Erreurs bloquantes</dt>
-                      <dd className="font-medium text-[#f7f2e5]">
-                        {previewStats.blockingErrorCount}
-                      </dd>
-                    </div>
-                  </>
-                )}
-                {preview.mode === 'transactions' && (
-                  <div className="flex items-center justify-between gap-3">
-                    <dt className="text-[#c7d1c1]">Types utiles</dt>
-                    <dd className="font-medium text-[#f7f2e5]">{preview.kindCount}</dd>
-                  </div>
-                )}
-              </dl>
-
-              {previewStats && previewStats.qualityNotes.length > 0 && (
-                <div className="mt-4 rounded-2xl border border-[#e8d6ac]/12 bg-[#103123] px-4 py-3 text-xs leading-5 text-[#eadbbb]">
-                  {previewStats.qualityNotes.map((note) => (
-                    <p key={note}>{note}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="overflow-hidden rounded-[24px] border border-[#e8d6ac]/18 bg-[#143525]/78">
-              <div className="border-b border-[#e8d6ac]/12 px-5 py-4">
-                <p className="text-xs uppercase tracking-[0.22em] text-[#c8b788]">Aperçu</p>
-                <p className="mt-1 text-sm text-[#c7d1c1]">
-                  Les premières lignes vraiment retenues pour le suivi.
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[680px] text-sm">
-                  <thead className="bg-[#183a2b] text-[#d9c89f]">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-semibold">Date</th>
-                      <th className="px-4 py-3 text-left font-semibold">Type</th>
-                      <th className="px-4 py-3 text-left font-semibold">Actif</th>
-                      <th className="px-4 py-3 text-left font-semibold">Plateforme</th>
-                      <th className="px-4 py-3 text-right font-semibold">Détail</th>
-                      <th className="px-4 py-3 text-left font-semibold">Devise</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#e8d6ac]/10 text-[#f7f2e5]">
-                    {preview.sampleRows.map((row, index) => (
-                      <tr key={`${row.date}-${index}`} className="hover:bg-[#183a2b]">
-                        <td className="px-4 py-3">{formatShortDate(row.date)}</td>
-                        <td className="px-4 py-3">{formatKindLabel(row)}</td>
-                        <td className="px-4 py-3">
-                          {'assetSymbol' in row && row.assetSymbol ? row.assetSymbol : 'Cash / flux'}
-                        </td>
-                        <td className="px-4 py-3">{row.platform}</td>
-                        <td className="px-4 py-3 text-right">{formatRowDetail(row)}</td>
-                        <td className="px-4 py-3">{row.currency}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="bg-[#183a2b] text-[#d9c89f]">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold">Date</th>
+                  <th className="px-4 py-3 text-left font-semibold">Type</th>
+                  <th className="px-4 py-3 text-left font-semibold">Actif</th>
+                  <th className="px-4 py-3 text-left font-semibold">Plateforme</th>
+                  <th className="px-4 py-3 text-right font-semibold">Détail</th>
+                  <th className="px-4 py-3 text-left font-semibold">Devise</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#e8d6ac]/10 text-[#f7f2e5]">
+                {preview.sampleRows.map((row, index) => (
+                  <tr key={`${row.date}-${index}`} className="hover:bg-[#183a2b]">
+                    <td className="px-4 py-3">{formatShortDate(row.date)}</td>
+                    <td className="px-4 py-3">{formatKindLabel(row)}</td>
+                    <td className="px-4 py-3">
+                      {'assetSymbol' in row && row.assetSymbol ? row.assetSymbol : 'Cash / flux'}
+                    </td>
+                    <td className="px-4 py-3">{row.platform}</td>
+                    <td className="px-4 py-3 text-right">{formatRowDetail(row)}</td>
+                    <td className="px-4 py-3">{row.currency}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {ignoredErrors.length > 0 && (
         <div className="mt-5 rounded-[22px] border border-[#e8d6ac]/16 bg-[#153424]/72 px-4 py-4 text-sm text-[#d5dccf]">
-          <p className="font-semibold text-[#f0e2bf]">Lignes ignorées / rejetées</p>
+          <p className="font-semibold text-[#f0e2bf]">Lignes ignorées</p>
           <ul className="mt-3 space-y-2">
-            {ignoredErrors.slice(0, 4).map((error) => (
+            {ignoredErrors.slice(0, 3).map((error) => (
               <li key={`${error.row}-${error.message}`}>
                 {error.row > 0 ? `Ligne ${error.row} : ` : ''}
                 {error.message}
               </li>
             ))}
-            {ignoredErrors.length > 4 && <li>… {ignoredErrors.length - 4} ligne(s) ignorée(s) supplémentaires.</li>}
+            {ignoredErrors.length > 3 && (
+              <li>… {ignoredErrors.length - 3} ligne(s) supplémentaires.</li>
+            )}
           </ul>
         </div>
       )}
