@@ -858,13 +858,13 @@ const Dashboard: React.FC = () => {
       <div className="rounded-3xl border border-stone-200/10 bg-gradient-to-br from-[#264838] via-[#315a42] to-[#797550] p-6 shadow-2xl shadow-emerald-950/20">
         <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
           <div>
-            <p className="text-xs uppercase tracking-[0.26em] text-stone-300">Vue simple</p>
+            <p className="text-xs uppercase tracking-[0.26em] text-stone-300">Patrimoine vivant</p>
           <h2 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">
-              Voir d’abord ce que vous détenez, puis sa valeur.
+              Ton portefeuille a enfin une tête de portefeuille.
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-200">
-              L’accueil est recentré sur l’essentiel: les holdings nettes, leurs quantités, puis la
-              valeur actuelle et l’évolution du portefeuille.
+              Une vue nette de ton patrimoine investi, de ce qu’il pèse aujourd’hui et de la
+              direction qu’il prend, sans roman comptable au réveil.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3 text-xs text-stone-200">
