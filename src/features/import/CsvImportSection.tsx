@@ -1,13 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CsvHeader,
   CsvParseError,
   NormalizedPositionSnapshotRow,
   NormalizedTransactionRow,
   parseNormalizedPositionSnapshotsCsv,
   parseNormalizedTransactionsCsv,
   parseRecognizedInvestmentCsv,
-  suggestCsvColumnMapping,
 } from '../../lib/csvImport';
 import { fetchFxRatesToEur } from '../../lib/liveMarketData';
 import { adminRepository } from '../../repositories/adminRepository';
@@ -21,17 +19,13 @@ import { ImportSourceAdapterId } from '../../types';
 import {
   DetectedImportPreset,
   ImportSupportStatus,
-  buildImportPreviewStats,
   buildFileFingerprint,
   detectImportPreset,
   formatFileSize,
-  formatLongDateTime,
   getImportModeLabel,
-  getImportSupportLabel,
 } from './importUx';
 
 const BASE_CURRENCY = 'EUR';
-const TRANSACTION_PREVIEW_REQUIRED_FIELDS: CsvHeader[] = ['date', 'kind'];
 
 type ParsedImportRow = NormalizedTransactionRow | NormalizedPositionSnapshotRow;
 type ParsedImportMode = 'transactions' | 'monthly_positions';
@@ -334,36 +328,17 @@ const CsvImportSection: React.FC = () => {
     };
   }, [activeCandidate]);
 
-  const previewStats = useMemo(() => {
-    if (!activeCandidate || !csvText) return null;
-
-    const mappingSuggestion = suggestCsvColumnMapping(csvText);
-    const hasSnapshotIdentifier = Boolean(
-      mappingSuggestion.mapping.asset_symbol ||
-        mappingSuggestion.mapping.broker_symbol ||
-        mappingSuggestion.mapping.isin,
-    );
-    const requiredFields: CsvHeader[] =
-      selectedMode === 'transactions'
-        ? TRANSACTION_PREVIEW_REQUIRED_FIELDS
-        : hasSnapshotIdentifier
-          ? ['date', 'qty']
-          : ['date', 'asset_symbol', 'qty'];
-
-    return buildImportPreviewStats({
-      mode: selectedMode,
-      sourceProfile:
-        parsedImport?.detectedPreset?.sourceProfile ??
-        (selectedMode === 'transactions' ? 'broker_export' : 'monthly_statement'),
-      rows: activeCandidate.rows,
-      errors: activeCandidate.errors,
-      requiredFields,
-      columnMapping: mappingSuggestion.mapping,
-      mappingConfidence: mappingSuggestion.confidence,
-      defaultCurrency: BASE_CURRENCY,
-      targetLabel: buildScopeKey(defaultPlatform, targetAccountName),
-    });
-  }, [activeCandidate, csvText, defaultPlatform, parsedImport?.detectedPreset?.sourceProfile, selectedMode, targetAccountName]);
+  const availableModes = useMemo(
+    () =>
+      parsedImport
+        ? (['transactions', 'monthly_positions'] as ParsedImportMode[]).filter((mode) => {
+            const candidate =
+              mode === 'transactions' ? parsedImport.transactions : parsedImport.monthlyPositions;
+            return candidate.rows.length > 0;
+          })
+        : [],
+    [parsedImport],
+  );
 
   const resetState = () => {
     setStatus('idle');

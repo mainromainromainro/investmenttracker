@@ -6,7 +6,6 @@ import { useTransactionStore } from '../../stores/transactionStore';
 import { usePriceStore } from '../../stores/priceStore';
 import { useFxStore } from '../../stores/fxStore';
 import { adminRepository } from '../../repositories/adminRepository';
-import CsvImportSection from '../import/CsvImportSection';
 import {
   getLiveDataApiKey,
   hasCustomLiveDataApiKey,
@@ -89,10 +88,8 @@ const Settings: React.FC = () => {
     <div className="space-y-6">
       <PageHeading
         title="Réglages"
-        subtitle="Import mensuel, source live Twelve Data et outils avancés."
+        subtitle="Clé Twelve Data et outils d’administration locale."
       />
-
-      <CsvImportSection />
 
       <div className={cardClass}>
         <h3 className="text-lg font-semibold text-[#173326]">Twelve Data</h3>

@@ -1,10 +1,12 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate } from 'react-router-dom';
 import './App.css';
 import Dashboard from './features/dashboard/Dashboard';
+import ImportPage from './features/import/ImportPage';
 import Settings from './features/settings/Settings';
 
 const navItems = [
   { to: '/', label: 'Dashboard' },
+  { to: '/import', label: 'Import CSV' },
   { to: '/settings', label: 'Réglages' },
 ];
 
@@ -49,8 +51,8 @@ function App() {
         <main className="relative z-10 mx-auto max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/import" element={<ImportPage />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/import" element={<Navigate to="/settings" replace />} />
             <Route path="/assets" element={<Navigate to="/settings" replace />} />
             <Route path="/platforms" element={<Navigate to="/settings" replace />} />
             <Route path="/accounts" element={<Navigate to="/settings" replace />} />
