@@ -1,291 +1,157 @@
 # Investment Tracker
 
-A lightweight offline-first investment portfolio tracker built with **Vite + React + TypeScript**, **Dexie (IndexedDB)**, **Zustand**, and **Tailwind CSS**.
+Dernière mise à jour: 2026-03-30
 
-## Features
+Investment Tracker est un portefeuille d'investissement local-first construit avec `Vite`, `React`, `TypeScript`, `Dexie` et `Zustand`.
 
-- 📱 **Offline-first**: All data stored locally in IndexedDB
-- 🏦 **Multi-platform support**: Track assets across different brokers
-- 💰 **Multi-currency**: Automatic currency conversion to EUR
-- 📊 **Portfolio dashboard**: KPIs, aggregations by platform and asset type
-- 🔄 **Flexible transactions**: BUY, SELL, DEPOSIT, WITHDRAW, FEE support
-- 📈 **Price tracking**: Record asset prices at specific dates
-- 💱 **FX rates**: Manual FX rate snapshots for conversion
-- 🧪 **Tested**: Core computations covered with Vitest
-- 🏗️ **Scalable**: Repository layer for easy migration to Supabase
+Le produit n'est plus un simple CRUD multi-pages. L'usage réel du workspace est aujourd'hui centré sur:
 
-## Tech Stack
+- un `Dashboard` de synthèse
+- une page `Réglages` qui concentre l'import CSV, la configuration live Twelve Data et les outils d'administration locale
+- un pipeline d'import orienté audit, déduplication et résolution d'actifs
 
-- **Frontend**: React 18 + TypeScript + React Router
-- **Styling**: Tailwind CSS
-- **State Management**: Zustand
-- **Database**: Dexie (IndexedDB wrapper)
-- **Build**: Vite
-- **Testing**: Vitest
-- **Validation**: Zod (ready for integration)
+## Vue d'ensemble actuelle
 
-## Project Structure
+### Surface UI réellement exposée
 
-```
-src/
-├── components/           # Reusable UI components
-├── db/                   # Dexie database setup
-├── features/             # Feature modules (folder structure)
-│   ├── assets/          # Asset CRUD
-│   ├── dashboard/       # Portfolio dashboard
-│   ├── fx/              # FX rate management
-│   ├── platforms/       # Platform/broker CRUD
-│   ├── prices/          # Price snapshot CRUD
-│   ├── settings/        # Settings, reset, seed data
-│   └── transactions/    # Transaction CRUD
-├── lib/                 # Utility functions
-│   └── computations.ts  # Portfolio calculations (tested)
-├── repositories/        # Data access layer
-│   ├── assetRepository.ts
-│   ├── fxRepository.ts
-│   ├── platformRepository.ts
-│   ├── priceRepository.ts
-│   └── transactionRepository.ts
-├── stores/             # Zustand stores
-│   ├── assetStore.ts
-│   ├── fxStore.ts
-│   ├── platformStore.ts
-│   ├── priceStore.ts
-│   └── transactionStore.ts
-├── types/              # TypeScript types
-├── App.tsx
-└── main.tsx
-```
+- `/` -> `Dashboard`
+- `/settings` -> `Réglages`
+- `/import`, `/assets`, `/platforms`, `/accounts`, `/transactions`, `/prices`, `/fx` -> redirection vers `/settings`
 
-## Data Model
+Les anciens écrans CRUD existent encore dans `src/features/*`, mais ils ne sont plus câblés dans le routeur principal. Ils servent surtout de base de travail ou de modules hérités.
 
-### Platform
-```typescript
-{
-  id: string,
-  name: string,
-  createdAt: number
-}
-```
+### Capacités déjà présentes dans le code
 
-### Asset
-```typescript
-{
-  id: string,
-  type: 'ETF' | 'STOCK' | 'CRYPTO',
-  symbol: string,
-  name: string,
-  currency: string,  // e.g., "USD", "GBP"
-  createdAt: number
-}
-```
+- stockage offline-first dans IndexedDB via Dexie
+- consolidation multi-plateformes et multi-comptes
+- prise en charge de `ETF`, `STOCK`, `CRYPTO`
+- transactions enrichies: `BUY`, `SELL`, `DEPOSIT`, `WITHDRAW`, `FEE`, `DIVIDEND`, `TRANSFER_IN`, `TRANSFER_OUT`, `STAKING_REWARD`, `AIRDROP`
+- import CSV en deux modes:
+  - `transactions`
+  - `monthly_positions`
+- audit trail d'import avec `ImportJob` et `ImportRow`
+- déduplication par empreinte de fichier et empreintes canoniques de lignes
+- résolution d'actifs via ISIN puis clé canonique `brokerSymbol + exchange + currency`, avec repli contrôlé sur les actifs legacy
+- snapshots de prix et de FX
+- rafraîchissement live via Twelve Data pour les prix et les taux de change
+- calculs de valorisation, PRU/coût de revient partiel, PnL latent, revenus de dividendes et historique de valorisation
 
-### Transaction
-```typescript
-{
-  id: string,
-  platformId: string,
-  assetId?: string,
-  kind: 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAW' | 'FEE',
-  date: number,
-  qty?: number,
-  price?: number,
-  fee?: number,
-  currency: string,
-  note?: string,
-  createdAt: number
-}
-```
+## Modèle de données actuel
 
-### PriceSnapshot
-```typescript
-{
-  id: string,
-  assetId: string,
-  date: number,
-  price: number,
-  currency: string,  // Price currency (asset's native currency)
-  createdAt: number
-}
-```
+Le schéma Dexie courant est en version `6` et persiste 9 tables:
 
-### FxSnapshot
-```typescript
-{
-  id: string,
-  pair: string,       // e.g., "USD/EUR"
-  date: number,
-  rate: number,       // 1 unit of base → EUR (e.g., 1 USD = 0.92 EUR)
-  createdAt: number
-}
-```
+- `platforms`
+- `accounts`
+- `assets`
+- `transactions`
+- `priceSnapshots`
+- `fxSnapshots`
+- `importJobs`
+- `importRows`
+- `positionSnapshots`
 
-## Core Calculations
+Les types sont centralisés dans [src/types/index.ts](src/types/index.ts).
 
-### Position Quantity
-```
-qty = sum(BUY transactions) - sum(SELL transactions)
-```
+### Points importants du modèle
 
-### Latest Price
-Latest PriceSnapshot by asset (max date)
+- `Asset` embarque désormais une identité métier:
+  - `canonicalAssetKey`
+  - `identityStrategy`
+  - `identityStatus`
+  - `isin`
+  - `brokerSymbol`
+  - `exchange`
+- `Transaction`, `PriceSnapshot` et `PositionSnapshot` héritent d'un contexte de source d'import pour conserver la traçabilité
+- `ImportJob` et `ImportRow` servent à l'idempotence, au debug et au support utilisateur
 
-### Latest FX Rate
-Latest FxSnapshot by pair (max date). Defaults to 1 for EUR.
+## Pipeline métier
 
-### Value in EUR
-```
-value_EUR = qty × price × fx_rate
-```
+### 1. Import CSV
 
-### Portfolio Summary
-- Total value in EUR
-- Aggregated by platform
-- Aggregated by asset type
-- All positions with quantities and values
+Le flux principal passe par [src/features/import/CsvImportSection.tsx](src/features/import/CsvImportSection.tsx):
 
-## Getting Started
+1. chargement du fichier
+2. détection éventuelle de la source
+3. parsing en lignes normalisées
+4. affichage d'un aperçu avec stats, erreurs et qualité de mapping
+5. préchargement optionnel des devises vers EUR
+6. import dans IndexedDB via `adminRepository`
 
-### Prerequisites
-- Node.js 16+ (npm or pnpm)
+### 2. Résolution d'actifs
 
-### Installation
+Le point clé du chantier actuel est [src/lib/assetResolver.ts](src/lib/assetResolver.ts):
+
+- priorité au match par ISIN
+- sinon match par clé canonique dérivée de `brokerSymbol`, `exchange` et `currency`
+- si un actif legacy correspond seulement de manière lâche, il peut être promu vers une identité plus forte
+- les cas ambigus ou non résolus restent explicites
+
+### 3. Holdings et valorisation
+
+La synthèse active du dashboard s'appuie aujourd'hui sur [src/lib/computations.ts](src/lib/computations.ts), qui:
+
+- filtre les transactions faisant autorité pour les holdings
+- calcule les quantités par `assetId + platformId + accountId`
+- valorise en EUR via les derniers snapshots de prix et FX
+- agrège par plateforme, type et ticker
+- calcule un historique temporel de valorisation
+
+Un moteur plus ambitieux existe dans [src/lib/portfolioAnalytics.ts](src/lib/portfolioAnalytics.ts), mais il n'est pas encore branché sur le dashboard. Il faut donc éviter de faire diverger ces deux couches sans décision explicite.
+
+## Sources d'import et données live
+
+### Sources reconnues explicitement
+
+- `Trading 212`
+- `Revolut Stock`
+- `Interactive Brokers / Open Position Summary`
+
+Le parsing flexible reste disponible pour les CSV custom via [src/lib/csvImport.ts](src/lib/csvImport.ts).
+
+### Données live
+
+[src/lib/liveMarketData.ts](src/lib/liveMarketData.ts) utilise l'API Twelve Data pour:
+
+- les prix live par ticker
+- les taux de change vers EUR
+
+La clé peut venir:
+
+- de `localStorage`
+- de `VITE_TWELVE_DATA_API_KEY`
+- sinon d'une clé de démonstration (`demo`) très limitée
+
+## Commandes utiles
 
 ```bash
-# Install dependencies
 npm install
-
-# Start dev server
 npm run dev
-
-# Build for production
+npm run test -- --run
+npm run lint
 npm run build
-
-# Run tests
-npm run test
 ```
 
-## Usage
+## Ce qu'un agent doit savoir avant d'intervenir
 
-1. **Create platforms** → Go to `/platforms` and add your brokers
-2. **Create assets** → Go to `/assets` and add ETFs, stocks, cryptos
-3. **Add transactions** → Go to `/transactions` and record buys/sells/deposits
-4. **Add prices** → Go to `/prices` and record price snapshots
-5. **Add FX rates** → Go to `/fx` and record currency conversion rates
-6. **View dashboard** → Go to `/` to see aggregated portfolio value
+### Invariants à préserver
 
-### Importer des transactions via CSV
+- ne pas casser l'idempotence des imports
+- ne pas remélanger implicitement snapshot mensuel et transaction explicite
+- ne pas fusionner silencieusement des actifs ambigus
+- ne pas introduire une troisième source de vérité pour les holdings ou la valorisation
 
-Depuis le bouton **Import** de la barre de navigation (ou dans **Settings**), vous pouvez charger un CSV qui sera parsé, enrichi (prix, FX, plateformes/actifs manquants) puis injecté automatiquement. L’import accepte les colonnes canoniques suivantes (ordre libre) ainsi que leurs alias fréquents :
+### Réalité du workspace au 2026-03-30
 
-| Colonne attendue | Alias acceptés | Obligatoire | Notes |
-| ---------------- | -------------- | ----------- | ----- |
-| `date`           |                | Oui         | ISO (`2024-01-01`) ou timestamp (ms) |
-| `platform`       | `Broker`       | Oui         | Nom de la plateforme/broker |
-| `kind`           | `Type`, `Transaction_Type` | Oui | `BUY`, `SELL`, `DEPOSIT`, `WITHDRAW`, `FEE` |
-| `asset_symbol`   | `Ticker`, `Symbol`, `ISIN` | Requis pour BUY/SELL | |
-| `asset_name`     | `Name`         | Non         | Défaut : symbole |
-| `asset_type`     |                | Requis pour BUY/SELL (défaut : `STOCK`) | Valeurs: `ETF`, `STOCK`, `CRYPTO` |
-| `qty`            | `Shares`, `Quantity` | Requis pour BUY/SELL | Doit être > 0 |
-| `price`          |                | Requis pour BUY/SELL | |
-| `currency`       | `Currency_Code`, `Price_Currency` | Conseillé   | Devise de cotation. Si absente : tentative via ticker puis devise par défaut (sélecteur dans l’UI) |
-| `cash_currency`  | `Settlement_Currency` | Non | Devise de règlement (sinon `currency`) |
-| `fee`            | `Fees`, `Commission` | Non | Nombre positif |
-| `note`           |                | Non | Commentaire libre |
+- le chantier actif porte sur le durcissement de l'identité d'actif et de la résolution d'import
+- plusieurs fichiers de tests ont évolué dans `src/lib/*`
+- la documentation historique qui parlait d'un projet "complet" en 5 tables n'est plus valable
 
-Deux modèles fonctionnent donc :
+## Documentation associée
 
-```
-date,platform,currency,kind,asset_symbol,asset_name,asset_type,qty,price,fee,note
-```
-
-ou encore
-
-```
-Date,Ticker,Type,Shares,Price,Broker,Fees
-```
-
-Exemple :
-
-```
-2025-01-03,VUSA,BUY,0.048592,108.246,Trading212,0.0
-```
-
-Après le chargement du fichier, l’application affiche les erreurs détectées (ligne + message) et le nombre de transactions prêtes à l’import avant d’écrire dans IndexedDB. Pour les devises ≠ EUR, l’import tente automatiquement de récupérer un FX spot via exchangerate.host et de créer les snapshots associés ; sinon un message vous indique les devises à compléter manuellement.
-
-### Testing with Sample Data
-
-1. Go to `/settings`
-2. Click **"Add Sample Data"** to populate the database with example data
-3. Explore the dashboard and pages
-4. Use **"Reset Database"** to clear all data
-
-## Development Notes
-
-### Architecture
-
-The app follows a **layered architecture**:
-
-1. **Components Layer**: React components for UI
-2. **Features Layer**: Feature-specific pages and logic
-3. **Stores Layer**: Zustand stores for state management
-4. **Repositories Layer**: Data access abstraction
-5. **Database Layer**: Dexie + IndexedDB
-
-This structure makes it easy to migrate from IndexedDB to a backend like Supabase later.
-
-### Adding New Features
-
-To add a new entity (e.g., `Portfolio`):
-
-1. Add type to `src/types/index.ts`
-2. Create `src/repositories/portfolioRepository.ts`
-3. Create `src/stores/portfolioStore.ts`
-4. Create feature in `src/features/portfolios/`
-5. Add route to `src/App.tsx`
-
-### Testing
-
-Core computations are tested in `src/lib/computations.test.ts`:
-- `computePositionQty()` - Position quantity calculation
-- `getLatestPrice()` - Latest price snapshot retrieval
-- `getLatestFxRate()` - Latest FX rate retrieval
-- `computeValueEUR()` - EUR value calculation
-
-Run tests:
-```bash
-npm run test
-```
-
-## Known Limitations & TODOs
-
-- [ ] Validation layer using Zod (structure ready, integration pending)
-- [ ] Performance tracking (not in scope - value tracking only)
-- [ ] Import/export data
-- [ ] Multiple portfolios (currently single portfolio)
-- [ ] Cost basis tracking for tax purposes
-- [ ] Dividend recording
-- [ ] Advanced filtering/search on tables
-- [ ] Charts/graphs for portfolio evolution
-- [ ] Backup to cloud storage
-
-## Performance Notes
-
-For optimal performance:
-- IndexedDB is limited to ~50MB per origin (local storage)
-- Suitable for tracking up to several thousand transactions
-- Computations are O(n) where n = number of transactions
-- Consider archiving old data if app grows
-
-## Browser Support
-
-- Modern browsers with IndexedDB support
-- Chrome, Firefox, Safari, Edge (latest versions)
-
-## License
-
-MIT
-
-## Contributing
-
-Feel free to fork and submit PRs for improvements!
+- [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) -> état courant et handoff rapide
+- [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md) -> détails techniques et limites
+- [ARCHITECTURE.md](ARCHITECTURE.md) -> architecture du runtime et flux de données
+- [QUICKSTART.md](QUICKSTART.md) -> démarrage local et parcours recommandé
+- [FILES.md](FILES.md) -> repérage rapide des fichiers importants
+- [CSV_HOLDINGS_ROLLOUT_PLAN.md](CSV_HOLDINGS_ROLLOUT_PLAN.md) -> feuille de route import/holdings
+- [CENTRAL_GOVERNANCE.md](CENTRAL_GOVERNANCE.md) -> règles d'évolution sur le pipeline critique

@@ -10,6 +10,7 @@ import {
   ImportRow,
   PositionSnapshot,
 } from '../types';
+import { getAssetCanonicalKey } from '../lib/assetIdentity';
 
 export class InvestmentTrackerDB extends Dexie {
   platforms!: Table<Platform>;
@@ -62,6 +63,77 @@ export class InvestmentTrackerDB extends Dexie {
         'id, status, mode, sourceProfile, sourceTemplateId, sourceSection, sourceSignature, fileFingerprint, importedAt',
       importRows:
         'id, importJobId, status, fingerprint, rowNumber, sourceProfile, sourceTemplateId, sourceSection, sourceTicker',
+      positionSnapshots:
+        'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
+    });
+    this.version(5)
+      .stores({
+        platforms: 'id',
+        accounts: 'id, platformId, [platformId+name], type',
+        assets:
+          'id, canonicalAssetKey, isin, brokerSymbol, exchange, [brokerSymbol+exchange+currency], identityStrategy',
+        transactions:
+          'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date, [platformId+assetId], [accountId+assetId]',
+        priceSnapshots: 'id, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
+        fxSnapshots: 'id, pair, date',
+        importJobs:
+          'id, status, mode, sourceProfile, sourceTemplateId, sourceSection, sourceSignature, fileFingerprint, importedAt',
+        importRows:
+          'id, importJobId, status, fingerprint, canonicalFingerprint, rowNumber, sourceProfile, sourceTemplateId, sourceSection, sourceTicker, sourceIsin, resolutionStatus, resolvedAssetId',
+        positionSnapshots:
+          'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('assets')
+          .toCollection()
+          .modify((asset: Record<string, unknown>) => {
+            const legacyAsset = asset as {
+              canonicalAssetKey?: string;
+              identityStrategy?: string;
+              identityStatus?: string;
+              isin?: string;
+              brokerSymbol?: string;
+              exchange?: string;
+              symbol: string;
+              currency: string;
+              type: string;
+            };
+
+            legacyAsset.canonicalAssetKey =
+              legacyAsset.canonicalAssetKey ?? getAssetCanonicalKey(legacyAsset as any);
+            legacyAsset.brokerSymbol =
+              legacyAsset.brokerSymbol ??
+              (typeof legacyAsset.symbol === 'string'
+                ? legacyAsset.symbol.trim().toUpperCase()
+                : undefined);
+            legacyAsset.identityStrategy =
+              legacyAsset.identityStrategy ??
+              (legacyAsset.isin
+                ? 'ISIN'
+                : legacyAsset.exchange
+                  ? 'BROKER_SYMBOL_EXCHANGE_CURRENCY'
+                  : 'LEGACY_UNVERIFIED');
+            legacyAsset.identityStatus =
+              legacyAsset.identityStatus ??
+              (legacyAsset.identityStrategy === 'LEGACY_UNVERIFIED'
+                ? 'UNRESOLVED'
+                : 'RESOLVED');
+          });
+      });
+    this.version(6).stores({
+      platforms: 'id',
+      accounts: 'id, platformId, [platformId+name], type',
+      assets:
+        'id, canonicalAssetKey, isin, brokerSymbol, exchange, [brokerSymbol+exchange+currency], identityStrategy',
+      transactions:
+        'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date, [platformId+assetId], [accountId+assetId]',
+      priceSnapshots: 'id, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
+      fxSnapshots: 'id, pair, date',
+      importJobs:
+        'id, status, mode, sourceProfile, sourceAdapterId, sourceTemplateId, sourceSection, sourceSignature, fileFingerprint, importedAt',
+      importRows:
+        'id, importJobId, status, fingerprint, canonicalFingerprint, rowNumber, sourceProfile, sourceAdapterId, sourceTemplateId, sourceSection, sourceTicker, sourceIsin, sourceRowRef, [sourceAdapterId+sourceRowRef], resolutionStatus, resolvedAssetId',
       positionSnapshots:
         'id, platformId, accountId, assetId, importJobId, sourceProfile, sourceTemplateId, sourceSection, date',
     });

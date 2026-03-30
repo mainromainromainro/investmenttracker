@@ -25,11 +25,15 @@ const sortTransactionsForHoldings = (left: Transaction, right: Transaction) => {
   return left.id.localeCompare(right.id);
 };
 
-const snapshotManagedPairKeys = (transactions: Transaction[]): Set<string> => {
+const explicitTransactionPairKeys = (transactions: Transaction[]): Set<string> => {
   const pairs = new Set<string>();
 
   for (const transaction of transactions) {
-    if (!transaction.assetId || !isPositionSnapshotTransaction(transaction)) {
+    if (
+      !transaction.assetId ||
+      isPositionSnapshotTransaction(transaction) ||
+      getTransactionQuantityDelta(transaction) === 0
+    ) {
       continue;
     }
     pairs.add(buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId));
@@ -56,8 +60,8 @@ export const getTransactionQuantityDelta = (transaction: Transaction): number =>
 };
 
 export const filterAuthoritativeHoldingsTransactions = (transactions: Transaction[]): Transaction[] => {
-  const managedPairs = snapshotManagedPairKeys(transactions);
-  if (managedPairs.size === 0) {
+  const explicitPairs = explicitTransactionPairKeys(transactions);
+  if (explicitPairs.size === 0) {
     return transactions;
   }
 
@@ -67,11 +71,11 @@ export const filterAuthoritativeHoldingsTransactions = (transactions: Transactio
     }
 
     const pairKey = buildPairKey(transaction.assetId, transaction.platformId, transaction.accountId);
-    if (!managedPairs.has(pairKey)) {
-      return transaction.source !== 'POSITION_SNAPSHOT';
+    if (!explicitPairs.has(pairKey)) {
+      return true;
     }
 
-    return transaction.source === 'POSITION_SNAPSHOT';
+    return !isPositionSnapshotTransaction(transaction);
   });
 };
 

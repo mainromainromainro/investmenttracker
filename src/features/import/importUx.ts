@@ -6,6 +6,10 @@ import {
   NormalizedPositionSnapshotRow,
   NormalizedTransactionRow,
 } from '../../lib/csvImport';
+import {
+  detectCsvSourceProfile,
+  extractInteractiveBrokersOpenPositionSummary,
+} from '../../lib/csvSourceProfiles';
 import { AssetType, ImportJob, ImportMode, ImportSourceProfile } from '../../types';
 
 export type { ImportMode, ImportSourceProfile } from '../../types';
@@ -120,8 +124,6 @@ export const IMPORT_SOURCE_OPTIONS: Array<{
   },
 ];
 
-const IBKR_SECTION_NAMES = ['Open Position Summary', 'Trade Summary', 'Deposits And Withdrawals'];
-
 const HISTORY_VERSION_PREFIX = 'csv-import-history';
 
 const fnv1a = (input: string): string => {
@@ -194,12 +196,6 @@ export const getRecommendedMode = (sourceProfile: ImportSourceProfile): ImportMo
   IMPORT_SOURCE_OPTIONS.find((option) => option.value === sourceProfile)?.recommendedMode ??
   'transactions';
 
-const detectDelimiter = (line: string): ',' | ';' => {
-  const commaCount = (line.match(/,/g) ?? []).length;
-  const semicolonCount = (line.match(/;/g) ?? []).length;
-  return semicolonCount > commaCount ? ';' : ',';
-};
-
 const normalizeHeaderToken = (value: string): string =>
   value
     .trim()
@@ -208,8 +204,6 @@ const normalizeHeaderToken = (value: string): string =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '');
-
-const normalizeDetectionText = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ');
 
 const parseQuotedCsvLine = (line: string): string[] => {
   const cells: string[] = [];
@@ -368,6 +362,7 @@ const parseIbkrOpenPositionSummary = (
       platform,
       currency,
       assetSymbol: symbol,
+      brokerSymbol: symbol,
       assetName: description || symbol,
       assetType,
       qty: quantity,
@@ -383,77 +378,52 @@ export const detectImportPreset = (
   csvText: string,
   fileName?: string,
 ): DetectedImportPreset | null => {
-  const firstLine = csvText.split(/\r?\n/, 1)[0] ?? '';
-  if (!firstLine.trim()) {
-    return null;
+  const detection = detectCsvSourceProfile(csvText, fileName);
+
+  switch (detection.sourceProfile) {
+    case 'trading212':
+      return {
+        sourceProfile: 'broker_export',
+        importMode: 'transactions',
+        platformName: detection.platformName ?? 'Trading 212',
+        label: 'Trading 212',
+        supportStatus: 'full',
+        supportedSections: ['Transactions'],
+        notes: ['The current import flow supports the flat Trading 212 trade export.'],
+      };
+    case 'revolut_stock':
+      return {
+        sourceProfile: 'broker_export',
+        importMode: 'transactions',
+        platformName: 'Revolut Stock',
+        label: 'Revolut Stock',
+        supportStatus: 'full',
+        supportedSections: ['Transactions'],
+        notes: ['The current import flow supports the flat Revolut stock export.'],
+      };
+    case 'interactive_brokers': {
+      const extraction = extractInteractiveBrokersOpenPositionSummary(csvText);
+      const supportedSections = extraction.section ? [extraction.section.name] : [];
+      return {
+        sourceProfile: 'monthly_statement',
+        importMode: 'monthly_positions',
+        platformName: detection.platformName ?? 'Interactive Brokers',
+        label: 'Interactive Brokers',
+        supportStatus: 'partial',
+        supportedSections,
+        notes: [
+          'Only the Open Position Summary section is imported in V1.',
+          ...(extraction.unsupportedSections.length > 0
+            ? [
+                `Sections detectees mais non importees: ${extraction.unsupportedSections.join(', ')}.`,
+              ]
+            : []),
+        ],
+      };
+    }
+    default:
+      return null;
   }
-
-  const headers = firstLine
-    .split(detectDelimiter(firstLine))
-    .map((header) => normalizeHeaderToken(header));
-  const headerSet = new Set(headers);
-  const normalizedFileName = (fileName ?? '').toLowerCase();
-  const normalizedText = normalizeDetectionText(csvText);
-
-  const looksLikeTrading212 =
-    headerSet.has('action') &&
-    headerSet.has('time') &&
-    headerSet.has('ticker') &&
-    headerSet.has('no_of_shares') &&
-    headerSet.has('price_share');
-
-  if (looksLikeTrading212 || normalizedFileName.includes('t212')) {
-    return {
-      sourceProfile: 'broker_export',
-      importMode: 'transactions',
-      platformName: 'Trading 212',
-      label: 'Trading 212',
-      supportStatus: 'full',
-      supportedSections: ['Transactions'],
-      notes: ['The current import flow supports the flat Trading 212 trade export.'],
-    };
-  }
-
-  const looksLikeRevolut =
-    headerSet.has('date') &&
-    headerSet.has('ticker') &&
-    headerSet.has('type') &&
-    headerSet.has('quantity') &&
-    headerSet.has('price_per_share') &&
-    headerSet.has('total_amount');
-
-  if (looksLikeRevolut || normalizedFileName.includes('revo') || normalizedFileName.includes('revolut')) {
-    return {
-      sourceProfile: 'broker_export',
-      importMode: 'transactions',
-      platformName: 'Revolut Stock',
-      label: 'Revolut Stock',
-      supportStatus: 'full',
-      supportedSections: ['Transactions'],
-      notes: ['The current import flow supports the flat Revolut stock export.'],
-    };
-  }
-
-  const looksLikeIbkrReport =
-    IBKR_SECTION_NAMES.some((section) => normalizedText.includes(section.toLowerCase())) &&
-    normalizedText.includes('open position summary,header,date,financialinstrument');
-
-  if (looksLikeIbkrReport || normalizedFileName.includes('ibkr') || normalizedFileName.includes('interactive_brokers')) {
-    return {
-      sourceProfile: 'monthly_statement',
-      importMode: 'monthly_positions',
-      platformName: 'Interactive Brokers',
-      label: 'Interactive Brokers',
-      supportStatus: 'partial',
-      supportedSections: ['Open Position Summary'],
-      notes: [
-        'Only the Open Position Summary section is imported in V1.',
-        'Performance and trade summary sections are review-only for now.',
-      ],
-    };
-  }
-
-  return null;
 };
 
 export const extractIbkrOpenPositionSummaryRows = (
@@ -478,12 +448,19 @@ const isPositionRow = (row: ParsedCsvRow): row is NormalizedPositionSnapshotRow 
   'qty' in row && !('kind' in row);
 
 const buildRowSignature = (row: ParsedCsvRow, mode: ImportMode): string => {
+  if (row.sourceAdapterId && row.sourceRowRef) {
+    return ['source', row.sourceAdapterId, row.sourceRowRef].join('|');
+  }
+
   if (mode === 'transactions' && !isPositionRow(row)) {
     return [
       row.date,
       row.platform,
       row.kind,
       row.assetSymbol ?? '',
+      row.assetIsin ?? '',
+      row.brokerSymbol ?? '',
+      row.exchange ?? '',
       row.qty ?? '',
       row.price ?? '',
       row.currency,
@@ -496,6 +473,9 @@ const buildRowSignature = (row: ParsedCsvRow, mode: ImportMode): string => {
     row.date,
     row.platform,
     row.assetSymbol,
+    row.assetIsin ?? '',
+    row.brokerSymbol ?? '',
+    row.exchange ?? '',
     row.qty,
     row.price ?? '',
     row.currency,

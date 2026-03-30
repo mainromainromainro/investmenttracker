@@ -34,6 +34,7 @@ export interface PositionAnalyticsDataQuality {
 export interface PortfolioAnalyticsPosition {
   assetId: string;
   platformId: string;
+  accountId?: string;
   asset: Asset;
   platform: Platform;
   quantity: number;
@@ -161,7 +162,10 @@ const isAssetLinked = (
 ): transaction is AnalyticsTransaction & { assetId: string } =>
   transaction.assetId !== undefined && transaction.assetId !== null;
 
-const makePairKey = (assetId: string, platformId: string) => `${assetId}:${platformId}`;
+const PLATFORM_SCOPE_ACCOUNT_ID = '__platform__';
+
+const makePairKey = (assetId: string, platformId: string, accountId?: string) =>
+  `${assetId}:${platformId}:${accountId ?? PLATFORM_SCOPE_ACCOUNT_ID}`;
 
 const sortTransactions = (a: AnalyticsTransaction, b: AnalyticsTransaction) => {
   if (a.date !== b.date) return a.date - b.date;
@@ -217,6 +221,25 @@ const getNativeAmount = (transaction: AnalyticsTransaction) => {
 
 const getFeeAmount = (transaction: AnalyticsTransaction) =>
   isFiniteNumber(transaction.fee) ? roundMoney(transaction.fee) : null;
+
+const getPositionQuantityDelta = (transaction: AnalyticsTransaction): number => {
+  const quantity = isFiniteNumber(transaction.qty) ? transaction.qty : 0;
+
+  switch (transaction.kind) {
+    case 'BUY':
+    case 'TRANSFER_IN':
+    case 'STAKING_REWARD':
+    case 'AIRDROP':
+    case 'SWAP_IN':
+      return quantity;
+    case 'SELL':
+    case 'TRANSFER_OUT':
+    case 'SWAP_OUT':
+      return -quantity;
+    default:
+      return 0;
+  }
+};
 
 interface PairLedger {
   quantity: number;
@@ -428,38 +451,49 @@ const buildTransferMatchMap = (transactions: AnalyticsTransaction[]) => {
 };
 
 const selectAuthoritativeTransactions = (transactions: AnalyticsTransaction[]) => {
-  const snapshotManagedPairs = new Set<string>();
+  const explicitPairs = new Set<string>();
 
   for (const transaction of transactions) {
-    if (transaction.assetId && isPositionSnapshotTransaction(transaction)) {
-      snapshotManagedPairs.add(makePairKey(transaction.assetId, transaction.platformId));
+    if (
+      !transaction.assetId ||
+      isPositionSnapshotTransaction(transaction) ||
+      getPositionQuantityDelta(transaction) === 0
+    ) {
+      continue;
     }
+
+    explicitPairs.add(makePairKey(transaction.assetId, transaction.platformId, transaction.accountId));
   }
 
-  if (snapshotManagedPairs.size === 0) {
+  if (explicitPairs.size === 0) {
     return transactions;
   }
 
   return transactions.filter((transaction) => {
     if (!transaction.assetId) return true;
-    const key = makePairKey(transaction.assetId, transaction.platformId);
-    if (!snapshotManagedPairs.has(key)) {
-      return !isPositionSnapshotTransaction(transaction);
+    const key = makePairKey(transaction.assetId, transaction.platformId, transaction.accountId);
+    if (!explicitPairs.has(key)) {
+      return true;
     }
-    return isPositionSnapshotTransaction(transaction);
+
+    return !isPositionSnapshotTransaction(transaction);
   });
 };
 
 const buildPositionAnalytics = (
   asset: Asset,
   platform: Platform,
+  accountId: string | undefined,
   transactions: AnalyticsTransaction[],
   priceSnapshots: PriceSnapshot[],
   fxSnapshots: FxSnapshot[],
   transferInBasisById: Map<string, number>,
 ): PortfolioAnalyticsPosition | null => {
   const relevantTransactions = transactions.filter(
-    (transaction) => transaction.assetId === asset.id && transaction.platformId === platform.id,
+    (transaction) =>
+      transaction.assetId === asset.id &&
+      transaction.platformId === platform.id &&
+      transaction.accountId === accountId,
   );
 
   if (relevantTransactions.length === 0) {
@@ -491,6 +525,7 @@ const buildPositionAnalytics = (
   return {
     assetId: asset.id,
     platformId: platform.id,
+    accountId,
     asset,
     platform,
     quantity: roundMoney(ledger.quantity),
@@ -720,11 +755,13 @@ export const analyzePortfolio = (input: PortfolioAnalyticsInput): PortfolioAnaly
   const authoritativeTransactions = selectAuthoritativeTransactions(input.transactions);
   const standaloneTotals = computeStandaloneTransactionTotals(authoritativeTransactions, input.fxSnapshots);
   const transferOutBasisById = new Map<string, number>();
+  const assetMap = new Map(input.assets.map((asset) => [asset.id, asset]));
+  const platformMap = new Map(input.platforms.map((platform) => [platform.id, platform]));
 
   const firstPassByPair = new Map<string, AnalyticsTransaction[]>();
   for (const transaction of authoritativeTransactions) {
     if (!isAssetLinked(transaction)) continue;
-    const key = makePairKey(transaction.assetId, transaction.platformId);
+    const key = makePairKey(transaction.assetId, transaction.platformId, transaction.accountId);
     const list = firstPassByPair.get(key);
     if (list) list.push(transaction);
     else firstPassByPair.set(key, [transaction]);
@@ -747,19 +784,25 @@ export const analyzePortfolio = (input: PortfolioAnalyticsInput): PortfolioAnaly
   }
 
   const positions: PortfolioAnalyticsPosition[] = [];
-  for (const asset of input.assets) {
-    for (const platform of input.platforms) {
-      const position = buildPositionAnalytics(
-        asset,
-        platform,
-        authoritativeTransactions,
-        input.priceSnapshots,
-        input.fxSnapshots,
-        transferInBasisById,
-      );
-      if (position) {
-        positions.push(position);
-      }
+  for (const transactions of firstPassByPair.values()) {
+    const firstTransaction = transactions[0];
+    if (!firstTransaction?.assetId) continue;
+
+    const asset = assetMap.get(firstTransaction.assetId);
+    const platform = platformMap.get(firstTransaction.platformId);
+    if (!asset || !platform) continue;
+
+    const position = buildPositionAnalytics(
+      asset,
+      platform,
+      firstTransaction.accountId,
+      authoritativeTransactions,
+      input.priceSnapshots,
+      input.fxSnapshots,
+      transferInBasisById,
+    );
+    if (position) {
+      positions.push(position);
     }
   }
 
@@ -769,6 +812,9 @@ export const analyzePortfolio = (input: PortfolioAnalyticsInput): PortfolioAnaly
     if (b.marketValueEUR === null) return -1;
     if (b.marketValueEUR !== a.marketValueEUR) return b.marketValueEUR - a.marketValueEUR;
     if (a.platformId !== b.platformId) return a.platformId.localeCompare(b.platformId);
+    if ((a.accountId ?? '') !== (b.accountId ?? '')) {
+      return (a.accountId ?? '').localeCompare(b.accountId ?? '');
+    }
     return a.asset.symbol.localeCompare(b.asset.symbol);
   });
 

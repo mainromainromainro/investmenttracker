@@ -2,6 +2,7 @@ import { db } from '../db';
 import {
   Account,
   Asset,
+  AssetResolutionStatus,
   FxSnapshot,
   ImportJob,
   ImportRow,
@@ -27,6 +28,11 @@ import {
   isPositionSnapshotTransaction,
   type PositionSnapshotInput,
 } from '../lib/positionSnapshots';
+import {
+  getAssetCanonicalKey,
+  normalizeIdentityCurrency,
+} from '../lib/assetIdentity';
+import { resolveImportedAsset } from '../lib/assetResolver';
 
 const withTables = [
   db.platforms,
@@ -73,10 +79,22 @@ const createId = (prefix: string) => {
 const normalizeKey = (value: string | undefined | null) =>
   String(value ?? '').trim().toLowerCase();
 
+const buildScopedSourceRowKey = (
+  sourceAdapterId: string | undefined,
+  sourceRowRef: string | undefined,
+  accountId: string | undefined,
+) =>
+  sourceAdapterId && sourceRowRef
+    ? `${sourceAdapterId}|${accountId ?? ''}|${sourceRowRef}`
+    : '';
+
 const defaultAccountNameForPlatform = (platformName: string) => `${platformName.trim()} Main`;
 
 const buildImportRowId = (importJobId: string, rowNumber: number) =>
   `import_row_${importJobId}_${rowNumber}`;
+
+const normalizeNumberFingerprintPart = (value: number | undefined) =>
+  value === undefined ? '' : Number(value.toFixed(12)).toString();
 
 const buildTransactionFingerprint = (row: NormalizedTransactionRow) =>
   [
@@ -84,6 +102,9 @@ const buildTransactionFingerprint = (row: NormalizedTransactionRow) =>
     row.platform,
     row.kind,
     row.assetSymbol ?? '',
+    row.assetIsin ?? '',
+    row.brokerSymbol ?? '',
+    row.exchange ?? '',
     row.qty ?? '',
     row.price ?? '',
     row.currency,
@@ -96,28 +117,90 @@ const buildSnapshotFingerprint = (row: NormalizedPositionSnapshotRow) =>
     row.date,
     row.platform,
     row.assetSymbol,
+    row.assetIsin ?? '',
+    row.brokerSymbol ?? '',
+    row.exchange ?? '',
     row.qty,
     row.price ?? '',
     row.currency,
     row.note ?? '',
   ].join('|');
 
+const buildCanonicalTransactionFingerprint = (args: {
+  row: NormalizedTransactionRow;
+  canonicalAssetKey?: string;
+  accountId?: string;
+}) =>
+  [
+    'transactions',
+    args.row.platform.trim().toLowerCase(),
+    args.accountId ?? '',
+    args.row.kind,
+    args.canonicalAssetKey ?? '',
+    args.row.assetIsin ?? '',
+    args.row.brokerSymbol ?? args.row.assetSymbol ?? '',
+    args.row.exchange ?? '',
+    args.row.date,
+    normalizeNumberFingerprintPart(args.row.qty),
+    normalizeNumberFingerprintPart(args.row.price),
+    normalizeIdentityCurrency(args.row.currency) ?? args.row.currency,
+    normalizeIdentityCurrency(args.row.cashCurrency) ?? args.row.cashCurrency ?? '',
+    (args.row.note ?? '').trim(),
+  ].join('|');
+
+const buildCanonicalSnapshotFingerprint = (args: {
+  row: NormalizedPositionSnapshotRow;
+  canonicalAssetKey?: string;
+  accountId?: string;
+}) =>
+  [
+    'monthly_positions',
+    args.row.platform.trim().toLowerCase(),
+    args.accountId ?? '',
+    args.canonicalAssetKey ?? '',
+    args.row.assetIsin ?? '',
+    args.row.brokerSymbol ?? args.row.assetSymbol,
+    args.row.exchange ?? '',
+    args.row.date,
+    normalizeNumberFingerprintPart(args.row.qty),
+    normalizeNumberFingerprintPart(args.row.price),
+    normalizeIdentityCurrency(args.row.currency) ?? args.row.currency,
+    (args.row.note ?? '').trim(),
+  ].join('|');
+
 const buildSourceContext = (
   row: {
+    sourceAdapterId?: ImportSourceAuditFields['sourceAdapterId'];
+    sourceSection?: string;
+    sourceSignature?: string;
+    sourceRowRef?: string;
     assetSymbol?: string;
+    assetIsin?: string;
+    brokerSymbol?: string;
+    exchange?: string;
     assetName?: string;
     currency: string;
+    resolutionStatus?: AssetResolutionStatus;
+    resolutionReason?: string;
+    matchStrategy?: Asset['identityStrategy'];
   },
   options?: ImportExecutionOptions,
 ): ImportSourceContextInput => ({
   sourceProfile: options?.sourceProfile ?? 'custom',
+  sourceAdapterId: row.sourceAdapterId ?? options?.sourceContext?.sourceAdapterId,
   sourceTemplateId: options?.sourceContext?.sourceTemplateId,
-  sourceSection: options?.sourceContext?.sourceSection,
-  sourceSignature: options?.sourceContext?.sourceSignature,
+  sourceSection: row.sourceSection ?? options?.sourceContext?.sourceSection,
+  sourceSignature: row.sourceSignature ?? options?.sourceContext?.sourceSignature,
+  sourceRowRef: row.sourceRowRef ?? options?.sourceContext?.sourceRowRef,
   sourceTicker: row.assetSymbol,
-  sourceIsin: options?.sourceContext?.sourceIsin,
+  sourceBrokerSymbol: row.brokerSymbol,
+  sourceExchange: row.exchange,
+  sourceIsin: row.assetIsin ?? options?.sourceContext?.sourceIsin,
   sourceName: row.assetName,
   sourceCurrency: row.currency,
+  resolutionStatus: row.resolutionStatus,
+  resolutionReason: row.resolutionReason,
+  matchStrategy: row.matchStrategy,
   sourceRaw: options?.sourceContext?.sourceRaw,
 });
 
@@ -125,12 +208,19 @@ const buildBatchSourceContext = (
   options?: ImportExecutionOptions,
 ): ImportSourceContextInput => ({
   sourceProfile: options?.sourceProfile ?? 'custom',
+  sourceAdapterId: options?.sourceContext?.sourceAdapterId,
   sourceTemplateId: options?.sourceContext?.sourceTemplateId,
   sourceSection: options?.sourceContext?.sourceSection,
   sourceSignature: options?.sourceContext?.sourceSignature,
+  sourceRowRef: options?.sourceContext?.sourceRowRef,
+  sourceBrokerSymbol: options?.sourceContext?.sourceBrokerSymbol,
+  sourceExchange: options?.sourceContext?.sourceExchange,
   sourceIsin: options?.sourceContext?.sourceIsin,
   sourceName: options?.sourceContext?.sourceName,
   sourceCurrency: options?.sourceContext?.sourceCurrency,
+  resolutionStatus: options?.sourceContext?.resolutionStatus,
+  resolutionReason: options?.sourceContext?.resolutionReason,
+  matchStrategy: options?.sourceContext?.matchStrategy,
   sourceRaw: options?.sourceContext?.sourceRaw,
 });
 
@@ -139,13 +229,21 @@ const buildSnapshotSourceContext = (
   options?: ImportExecutionOptions,
 ): ImportSourceContextInput => ({
   sourceProfile: snapshot.sourceProfile ?? options?.sourceProfile ?? 'custom',
+  sourceAdapterId: snapshot.sourceAdapterId ?? options?.sourceContext?.sourceAdapterId,
   sourceTemplateId: snapshot.sourceTemplateId ?? options?.sourceContext?.sourceTemplateId,
   sourceSection: snapshot.sourceSection ?? options?.sourceContext?.sourceSection,
   sourceSignature: snapshot.sourceSignature ?? options?.sourceContext?.sourceSignature,
+  sourceRowRef: snapshot.sourceRowRef ?? options?.sourceContext?.sourceRowRef,
   sourceTicker: snapshot.sourceTicker,
+  sourceBrokerSymbol:
+    snapshot.sourceBrokerSymbol ?? options?.sourceContext?.sourceBrokerSymbol,
+  sourceExchange: snapshot.sourceExchange ?? options?.sourceContext?.sourceExchange,
   sourceIsin: snapshot.sourceIsin ?? options?.sourceContext?.sourceIsin,
   sourceName: snapshot.sourceName,
   sourceCurrency: snapshot.sourceCurrency ?? snapshot.currency,
+  resolutionStatus: snapshot.resolutionStatus ?? options?.sourceContext?.resolutionStatus,
+  resolutionReason: snapshot.resolutionReason ?? options?.sourceContext?.resolutionReason,
+  matchStrategy: snapshot.matchStrategy ?? options?.sourceContext?.matchStrategy,
   sourceRaw: snapshot.sourceRaw ?? options?.sourceContext?.sourceRaw,
 });
 
@@ -166,13 +264,20 @@ const buildImportJob = (args: {
   id: args.id,
   mode: args.mode,
   sourceProfile: args.options.sourceProfile,
+  sourceAdapterId: args.options.sourceContext?.sourceAdapterId,
   sourceTemplateId: args.options.sourceContext?.sourceTemplateId,
   sourceSection: args.options.sourceContext?.sourceSection,
   sourceSignature: args.options.sourceContext?.sourceSignature,
+  sourceRowRef: args.options.sourceContext?.sourceRowRef,
   sourceTicker: args.options.sourceContext?.sourceTicker,
+  sourceBrokerSymbol: args.options.sourceContext?.sourceBrokerSymbol,
+  sourceExchange: args.options.sourceContext?.sourceExchange,
   sourceIsin: args.options.sourceContext?.sourceIsin,
   sourceName: args.options.sourceContext?.sourceName,
   sourceCurrency: args.options.sourceContext?.sourceCurrency,
+  resolutionStatus: args.options.sourceContext?.resolutionStatus,
+  resolutionReason: args.options.sourceContext?.resolutionReason,
+  matchStrategy: args.options.sourceContext?.matchStrategy,
   sourceRaw: args.options.sourceContext?.sourceRaw,
   status: args.status,
   platformId: args.platformId,
@@ -223,6 +328,26 @@ const upsertAccount = async (args: {
   args.accountMap.set(accountKey, account);
   args.existingAccounts.push(account);
   return { account, created: account };
+};
+
+const syncResolvedAsset = (args: {
+  asset: Asset;
+  assetUpdates?: Partial<Asset>;
+  existingAssets: Asset[];
+}) => {
+  if (!args.assetUpdates || Object.keys(args.assetUpdates).length === 0) {
+    return args.asset;
+  }
+
+  const nextAsset = {
+    ...args.asset,
+    ...args.assetUpdates,
+  };
+  const assetIndex = args.existingAssets.findIndex((asset) => asset.id === args.asset.id);
+  if (assetIndex >= 0) {
+    args.existingAssets[assetIndex] = nextAsset;
+  }
+  return nextAsset;
 };
 
 export const adminRepository = {
@@ -398,8 +523,13 @@ export const adminRepository = {
     const transactionsToCreate: Transaction[] = [];
     const priceSnapshots: PriceSnapshot[] = [];
     const importRows: ImportRow[] = [];
+    const updatedAssets = new Map<string, Asset>();
     const priceKeySet = new Set<string>();
     const rowFingerprintSet = new Set<string>();
+    const sourceRowRefSet = new Set<string>();
+    let duplicateExistingCount = 0;
+    let unresolvedCount = 0;
+    let ambiguousCount = 0;
     let importJobId: string | null = null;
     let duplicateSkipped = false;
 
@@ -472,19 +602,12 @@ export const adminRepository = {
         accountMap.set(`${account.platformId}:${normalizeKey(account.name)}`, account);
       });
 
-      const assetMap = new Map<string, Asset>();
-      existingAssets.forEach((asset) => {
-        assetMap.set(asset.symbol.toUpperCase(), asset);
-      });
-
       importJobId = options ? createId('import_job') : null;
 
       for (const row of rows) {
         const rowNumber = importRows.length + 1;
-        const rowFingerprint = buildTransactionFingerprint(row);
         const importRowId = importJobId ? buildImportRowId(importJobId, rowNumber) : undefined;
-        const isDuplicateInFile = rowFingerprintSet.has(rowFingerprint);
-        const sourceContext = buildSourceContext(row, options);
+        const rawFingerprint = buildTransactionFingerprint(row);
 
         const platformKey = normalizeKey(row.platform);
         let platform = platformMap.get(platformKey);
@@ -512,45 +635,223 @@ export const adminRepository = {
         }
 
         let asset: Asset | undefined;
-        if (row.assetSymbol) {
-          const symbol = row.assetSymbol.toUpperCase();
-          asset = assetMap.get(symbol);
-          if (!asset) {
-            asset = {
-              id: createId('asset'),
-              type: row.assetType ?? 'ETF',
-              symbol,
-              name: row.assetName || row.assetSymbol,
+        let canonicalFingerprint = '';
+        let resolutionStatus: AssetResolutionStatus | undefined;
+        let resolutionReason: string | undefined;
+        let matchStrategy: Asset['identityStrategy'] | undefined;
+        let duplicateOfImportRowId: string | undefined;
+        const isRecognizedImport = Boolean(row.sourceAdapterId);
+        const scopedSourceRowKey = buildScopedSourceRowKey(
+          row.sourceAdapterId,
+          row.sourceRowRef,
+          account.id,
+        );
+
+        if (row.assetSymbol || row.assetIsin || row.brokerSymbol) {
+          const resolution = resolveImportedAsset({
+            existingAssets,
+            input: {
+              assetName: row.assetName,
+              assetSymbol: row.assetSymbol,
+              brokerSymbol: row.brokerSymbol,
+              exchange: row.exchange,
+              assetIsin: row.assetIsin,
+              assetType: row.assetType,
               currency: row.currency,
-              createdAt: timestamp,
-            };
-            assetMap.set(symbol, asset);
+              platform: row.platform,
+            },
+            createId,
+            timestamp,
+            allowLegacyLooseMatch: !isRecognizedImport,
+          });
+          resolutionStatus = resolution.status;
+          resolutionReason = resolution.resolutionReason;
+          matchStrategy = resolution.identityStrategy;
+          canonicalFingerprint = buildCanonicalTransactionFingerprint({
+            row,
+            canonicalAssetKey: resolution.canonicalAssetKey,
+            accountId: account.id,
+          });
+
+          if (resolution.status === 'AMBIGUOUS') {
+            ambiguousCount += 1;
+            const sourceContext = buildSourceContext(
+              {
+                ...row,
+                resolutionStatus,
+                resolutionReason,
+                matchStrategy,
+              },
+              options,
+            );
+            importRows.push({
+              id: importRowId ?? createId('import_row'),
+              importJobId: importJobId ?? 'legacy_import',
+              rowNumber,
+              fingerprint: rawFingerprint,
+              canonicalFingerprint,
+              status: 'AMBIGUOUS_ASSET',
+              date: row.date,
+              platformName: row.platform,
+              accountName: account.name,
+              assetSymbol: row.assetSymbol,
+              kind: row.kind,
+              qty: row.qty,
+              currency: row.cashCurrency ?? row.currency,
+              message: resolutionReason,
+              ...sourceContext,
+              createdAt: timestamp + importRows.length,
+            });
+            continue;
+          }
+
+          if (resolution.status === 'UNRESOLVED') {
+            unresolvedCount += 1;
+            const sourceContext = buildSourceContext(
+              {
+                ...row,
+                resolutionStatus,
+                resolutionReason,
+                matchStrategy,
+              },
+              options,
+            );
+            importRows.push({
+              id: importRowId ?? createId('import_row'),
+              importJobId: importJobId ?? 'legacy_import',
+              rowNumber,
+              fingerprint: rawFingerprint,
+              canonicalFingerprint,
+              status: 'UNRESOLVED_ASSET',
+              date: row.date,
+              platformName: row.platform,
+              accountName: account.name,
+              assetSymbol: row.assetSymbol,
+              kind: row.kind,
+              qty: row.qty,
+              currency: row.cashCurrency ?? row.currency,
+              message: resolutionReason,
+              ...sourceContext,
+              createdAt: timestamp + importRows.length,
+            });
+            continue;
+          }
+
+          if (resolution.asset) {
+            asset = syncResolvedAsset({
+              asset: resolution.asset,
+              assetUpdates: resolution.assetUpdates,
+              existingAssets,
+            });
+            if (resolution.assetUpdates && Object.keys(resolution.assetUpdates).length > 0) {
+              updatedAssets.set(asset.id, asset);
+            }
+          } else if (resolution.createAsset) {
+            asset = resolution.createAsset;
+            existingAssets.push(asset);
             assetsCreated.push(asset);
           }
         }
+
+        canonicalFingerprint =
+          canonicalFingerprint ||
+          buildCanonicalTransactionFingerprint({
+            row,
+            canonicalAssetKey: asset ? getAssetCanonicalKey(asset) : undefined,
+            accountId: account.id,
+          });
+
+        const isDuplicateInFile = rowFingerprintSet.has(canonicalFingerprint);
+        const isDuplicateSourceRowInFile =
+          !isDuplicateInFile && scopedSourceRowKey ? sourceRowRefSet.has(scopedSourceRowKey) : false;
+        let isDuplicateExisting = false;
+        if (!isDuplicateInFile && !isDuplicateSourceRowInFile && row.sourceAdapterId && row.sourceRowRef) {
+          const existingImportRow = await db.importRows
+            .where('[sourceAdapterId+sourceRowRef]')
+            .equals([row.sourceAdapterId, row.sourceRowRef])
+            .filter(
+              (importRow) =>
+                importRow.accountName === account.name &&
+                (importRow.status === 'IMPORTED' ||
+                  importRow.status === 'MERGED_IN_FILE' ||
+                  importRow.status === 'IMPLICIT_CLOSE'),
+            )
+            .first();
+          if (existingImportRow) {
+            isDuplicateExisting = true;
+            duplicateExistingCount += 1;
+            duplicateOfImportRowId = existingImportRow.id;
+          }
+        }
+        if (!isDuplicateInFile && !isDuplicateSourceRowInFile && !isDuplicateExisting && canonicalFingerprint) {
+          const existingImportRow = await db.importRows
+            .where('canonicalFingerprint')
+            .equals(canonicalFingerprint)
+            .filter(
+              (importRow) =>
+                importRow.status === 'IMPORTED' ||
+                importRow.status === 'MERGED_IN_FILE' ||
+                importRow.status === 'IMPLICIT_CLOSE',
+            )
+            .first();
+          if (existingImportRow) {
+            isDuplicateExisting = true;
+            duplicateExistingCount += 1;
+            duplicateOfImportRowId = existingImportRow.id;
+          }
+        }
+
+        const sourceContext = buildSourceContext(
+          {
+            ...row,
+            resolutionStatus: resolutionStatus ?? (asset ? 'RESOLVED' : undefined),
+            resolutionReason,
+            matchStrategy,
+          },
+          options,
+        );
+
         importRows.push({
           id: importRowId ?? createId('import_row'),
           importJobId: importJobId ?? 'legacy_import',
           rowNumber,
-          fingerprint: rowFingerprint,
-          status: isDuplicateInFile ? 'DUPLICATE_IN_FILE' : 'IMPORTED',
+          fingerprint: rawFingerprint,
+          canonicalFingerprint,
+          status: isDuplicateInFile
+            ? 'DUPLICATE_IN_FILE'
+            : isDuplicateSourceRowInFile
+            ? 'DUPLICATE_IN_FILE'
+            : isDuplicateExisting
+              ? 'SKIPPED_DUPLICATE_EXISTING'
+              : 'IMPORTED',
           date: row.date,
           platformName: row.platform,
           accountName: account.name,
           assetSymbol: row.assetSymbol,
+          resolvedAssetId: asset?.id,
+          duplicateOfImportRowId,
           kind: row.kind,
           qty: row.qty,
           currency: row.cashCurrency ?? row.currency,
-          message: isDuplicateInFile ? 'Duplicate row inside the same file.' : undefined,
+          message: isDuplicateInFile
+            ? 'Duplicate row inside the same file.'
+            : isDuplicateSourceRowInFile
+              ? 'Duplicate source row reference inside the same file.'
+            : isDuplicateExisting
+              ? 'Skipped because an equivalent row was already imported from another file.'
+              : resolutionReason,
           ...sourceContext,
           createdAt: timestamp + importRows.length,
         });
-        rowFingerprintSet.add(rowFingerprint);
+        rowFingerprintSet.add(canonicalFingerprint);
+        if (scopedSourceRowKey) {
+          sourceRowRefSet.add(scopedSourceRowKey);
+        }
 
         // Keep duplicate rows in the audit trail, but never persist them as
         // transactions or price points. Otherwise one bad CSV line duplicates
         // both holdings and valuation inputs.
-        if (isDuplicateInFile) {
+        if (isDuplicateInFile || isDuplicateSourceRowInFile || isDuplicateExisting) {
           continue;
         }
 
@@ -569,7 +870,7 @@ export const adminRepository = {
           source: 'CSV_TRANSACTION',
           importJobId: importJobId ?? undefined,
           importRowId,
-          fingerprint: rowFingerprint,
+          fingerprint: canonicalFingerprint,
           ...sourceContext,
           createdAt: timestamp + transactionsToCreate.length,
         };
@@ -599,8 +900,13 @@ export const adminRepository = {
       if (accountsCreated.length) {
         await db.accounts.bulkAdd(accountsCreated);
       }
-      if (assetsCreated.length) {
-        await db.assets.bulkAdd(assetsCreated);
+      const assetsToPersist = Array.from(
+        new Map(
+          [...assetsCreated, ...updatedAssets.values()].map((asset) => [asset.id, asset]),
+        ).values(),
+      );
+      if (assetsToPersist.length) {
+        await db.assets.bulkPut(assetsToPersist);
       }
       if (transactionsToCreate.length) {
         await db.transactions.bulkAdd(transactionsToCreate);
@@ -616,10 +922,19 @@ export const adminRepository = {
             status: 'IMPORTED',
             options,
             rowCount: rows.length,
-            parsedRowCount: rows.length,
-            errorCount: 0,
-            duplicateRowCount: importRows.filter((row) => row.status === 'DUPLICATE_IN_FILE').length,
-            summary: `${transactionsToCreate.length} transaction(s) imported successfully.`,
+            parsedRowCount: transactionsToCreate.length,
+            errorCount: importRows.filter(
+              (row) =>
+                row.status === 'UNRESOLVED_ASSET' ||
+                row.status === 'AMBIGUOUS_ASSET' ||
+                row.status === 'ERROR',
+            ).length,
+            duplicateRowCount: importRows.filter(
+              (row) =>
+                row.status === 'DUPLICATE_IN_FILE' ||
+                row.status === 'SKIPPED_DUPLICATE_EXISTING',
+            ).length,
+            summary: `${transactionsToCreate.length} transaction(s) imported successfully, ${duplicateExistingCount} duplicate(s) skipped, ${unresolvedCount} unresolved row(s), ${ambiguousCount} ambiguous row(s).`,
             importedAt: timestamp,
             platformId: transactionsToCreate[0]?.platformId,
             accountId: transactionsToCreate[0]?.accountId,
@@ -635,6 +950,9 @@ export const adminRepository = {
       platformsCreated: platformsCreated.length,
       accountsCreated: accountsCreated.length,
       assetsCreated: assetsCreated.length,
+      duplicateExistingCount,
+      unresolvedCount,
+      ambiguousCount,
       duplicateSkipped,
     };
   },
@@ -660,9 +978,14 @@ export const adminRepository = {
     const platformsCreated: Platform[] = [];
     const accountsCreated: Account[] = [];
     const assetsCreated: Asset[] = [];
+    const updatedAssets = new Map<string, Asset>();
+    const importRows: ImportRow[] = [];
     let importedSnapshotCount = 0;
     let implicitClosureCount = 0;
     let syntheticTransactionCount = 0;
+    let duplicateExistingCount = 0;
+    let unresolvedCount = 0;
+    let ambiguousCount = 0;
     let importJobId: string | null = null;
     let duplicateSkipped = false;
 
@@ -734,16 +1057,16 @@ export const adminRepository = {
         accountMap.set(`${account.platformId}:${normalizeKey(account.name)}`, account);
       });
 
-      const assetMap = new Map<string, Asset>();
-      existingAssets.forEach((asset) => {
-        assetMap.set(asset.symbol.toUpperCase(), asset);
-      });
-
       importJobId = options ? createId('import_job') : null;
 
       const snapshotInputs: Array<PositionSnapshotInput & ImportSourceContextInput> = [];
+      const rowFingerprintSet = new Set<string>();
+      const sourceRowRefSet = new Set<string>();
+      const mergedSnapshotScopeKeys = new Set<string>();
       for (const row of rows) {
-        const sourceContext = buildSourceContext(row, options);
+        const rowNumber = importRows.length + 1;
+        const importRowId = importJobId ? buildImportRowId(importJobId, rowNumber) : undefined;
+        const rawFingerprint = buildSnapshotFingerprint(row);
         const platformKey = normalizeKey(row.platform);
         let platform = platformMap.get(platformKey);
         if (!platform) {
@@ -769,19 +1092,221 @@ export const adminRepository = {
           accountsCreated.push(created);
         }
 
-        const symbol = row.assetSymbol.toUpperCase();
-        let asset = assetMap.get(symbol);
-        if (!asset) {
-          asset = {
-            id: createId('asset'),
-            type: row.assetType ?? 'STOCK',
-            symbol,
-            name: row.assetName || row.assetSymbol,
+        const resolution = resolveImportedAsset({
+          existingAssets,
+          input: {
+            assetName: row.assetName,
+            assetSymbol: row.assetSymbol,
+            brokerSymbol: row.brokerSymbol,
+            exchange: row.exchange,
+            assetIsin: row.assetIsin,
+            assetType: row.assetType,
             currency: row.currency,
-            createdAt: timestamp,
-          };
-          assetMap.set(symbol, asset);
+            platform: row.platform,
+          },
+          createId,
+          timestamp,
+          allowLegacyLooseMatch: !row.sourceAdapterId,
+        });
+        const canonicalFingerprint = buildCanonicalSnapshotFingerprint({
+          row,
+          canonicalAssetKey: resolution.canonicalAssetKey,
+          accountId: account.id,
+        });
+        const sourceContext = buildSourceContext(
+          {
+            ...row,
+            resolutionStatus: resolution.status,
+            resolutionReason: resolution.resolutionReason,
+            matchStrategy: resolution.identityStrategy,
+          },
+          options,
+        );
+
+        if (resolution.status === 'AMBIGUOUS') {
+          ambiguousCount += 1;
+          importRows.push({
+            id: importRowId ?? createId('import_row'),
+            importJobId: importJobId ?? 'legacy_import',
+            rowNumber,
+            fingerprint: rawFingerprint,
+            canonicalFingerprint,
+            status: 'AMBIGUOUS_ASSET',
+            date: row.date,
+            platformName: row.platform,
+            accountName: account.name,
+            assetSymbol: row.assetSymbol,
+            qty: row.qty,
+            currency: row.currency,
+            message: resolution.resolutionReason,
+            ...sourceContext,
+            createdAt: timestamp + importRows.length,
+          });
+          continue;
+        }
+
+        if (resolution.status === 'UNRESOLVED') {
+          unresolvedCount += 1;
+          importRows.push({
+            id: importRowId ?? createId('import_row'),
+            importJobId: importJobId ?? 'legacy_import',
+            rowNumber,
+            fingerprint: rawFingerprint,
+            canonicalFingerprint,
+            status: 'UNRESOLVED_ASSET',
+            date: row.date,
+            platformName: row.platform,
+            accountName: account.name,
+            assetSymbol: row.assetSymbol,
+            qty: row.qty,
+            currency: row.currency,
+            message: resolution.resolutionReason,
+            ...sourceContext,
+            createdAt: timestamp + importRows.length,
+          });
+          continue;
+        }
+
+        let asset = resolution.asset;
+        if (asset) {
+          asset = syncResolvedAsset({
+            asset,
+            assetUpdates: resolution.assetUpdates,
+            existingAssets,
+          });
+          if (resolution.assetUpdates && Object.keys(resolution.assetUpdates).length > 0) {
+            updatedAssets.set(asset.id, asset);
+          }
+        } else if (resolution.createAsset) {
+          asset = resolution.createAsset;
+          existingAssets.push(asset);
           assetsCreated.push(asset);
+        }
+
+        if (!asset) {
+          unresolvedCount += 1;
+          importRows.push({
+            id: importRowId ?? createId('import_row'),
+            importJobId: importJobId ?? 'legacy_import',
+            rowNumber,
+            fingerprint: rawFingerprint,
+            canonicalFingerprint,
+            status: 'UNRESOLVED_ASSET',
+            date: row.date,
+            platformName: row.platform,
+            accountName: account.name,
+            assetSymbol: row.assetSymbol,
+            qty: row.qty,
+            currency: row.currency,
+            message: 'Asset could not be resolved.',
+            ...sourceContext,
+            createdAt: timestamp + importRows.length,
+          });
+          continue;
+        }
+
+        const targetSnapshotId = buildPositionSnapshotId(
+          platform.id,
+          asset.id,
+          row.date,
+          account.id,
+        );
+        const isDuplicateInFile = rowFingerprintSet.has(canonicalFingerprint);
+        const scopedSourceRowKey = buildScopedSourceRowKey(
+          row.sourceAdapterId,
+          row.sourceRowRef,
+          account.id,
+        );
+        const isDuplicateSourceRowInFile =
+          !isDuplicateInFile && scopedSourceRowKey ? sourceRowRefSet.has(scopedSourceRowKey) : false;
+        const isMergedInFile = !isDuplicateInFile && mergedSnapshotScopeKeys.has(targetSnapshotId);
+        let isDuplicateExisting = false;
+        let duplicateOfImportRowId: string | undefined;
+        if (
+          !isDuplicateInFile &&
+          !isDuplicateSourceRowInFile &&
+          !isMergedInFile &&
+          row.sourceAdapterId &&
+          row.sourceRowRef
+        ) {
+          const existingImportRow = await db.importRows
+            .where('[sourceAdapterId+sourceRowRef]')
+            .equals([row.sourceAdapterId, row.sourceRowRef])
+            .filter(
+              (importRow) =>
+                importRow.accountName === account.name &&
+                (importRow.status === 'IMPORTED' ||
+                  importRow.status === 'MERGED_IN_FILE' ||
+                  importRow.status === 'IMPLICIT_CLOSE'),
+            )
+            .first();
+          if (existingImportRow) {
+            isDuplicateExisting = true;
+            duplicateExistingCount += 1;
+            duplicateOfImportRowId = existingImportRow.id;
+          }
+        }
+        if (!isDuplicateInFile && !isDuplicateSourceRowInFile && !isMergedInFile && !isDuplicateExisting && canonicalFingerprint) {
+          const existingImportRow = await db.importRows
+            .where('canonicalFingerprint')
+            .equals(canonicalFingerprint)
+            .filter(
+              (importRow) =>
+                importRow.status === 'IMPORTED' ||
+                importRow.status === 'MERGED_IN_FILE' ||
+                importRow.status === 'IMPLICIT_CLOSE',
+            )
+            .first();
+          if (existingImportRow) {
+            isDuplicateExisting = true;
+            duplicateExistingCount += 1;
+            duplicateOfImportRowId = existingImportRow.id;
+          }
+        }
+
+        importRows.push({
+          id: importRowId ?? createId('import_row'),
+          importJobId: importJobId ?? 'legacy_import',
+          rowNumber,
+          fingerprint: rawFingerprint,
+          canonicalFingerprint,
+          status: isDuplicateInFile
+            ? 'DUPLICATE_IN_FILE'
+            : isDuplicateSourceRowInFile
+              ? 'DUPLICATE_IN_FILE'
+            : isMergedInFile
+              ? 'MERGED_IN_FILE'
+              : isDuplicateExisting
+                ? 'SKIPPED_DUPLICATE_EXISTING'
+                : 'IMPORTED',
+          date: row.date,
+          platformName: row.platform,
+          accountName: account.name,
+          assetSymbol: row.assetSymbol,
+          resolvedAssetId: asset.id,
+          duplicateOfImportRowId,
+          qty: row.qty,
+          currency: row.currency,
+          message: isDuplicateInFile
+            ? 'Duplicate row inside the same file.'
+            : isDuplicateSourceRowInFile
+              ? 'Duplicate source row reference inside the same file.'
+            : isMergedInFile
+              ? 'Merged into another snapshot row with the same platform, account, asset, and date.'
+              : isDuplicateExisting
+                ? 'Skipped because an equivalent snapshot row was already imported from another file.'
+                : resolution.resolutionReason,
+          ...sourceContext,
+          createdAt: timestamp + importRows.length,
+        });
+        rowFingerprintSet.add(canonicalFingerprint);
+        if (scopedSourceRowKey) {
+          sourceRowRefSet.add(scopedSourceRowKey);
+        }
+        mergedSnapshotScopeKeys.add(targetSnapshotId);
+
+        if (isDuplicateInFile || isDuplicateSourceRowInFile || isDuplicateExisting) {
+          continue;
         }
 
         snapshotInputs.push({
@@ -793,6 +1318,12 @@ export const adminRepository = {
           price: row.price,
           currency: row.currency,
           note: row.note,
+          sourceBrokerSymbol: row.brokerSymbol,
+          sourceExchange: row.exchange,
+          sourceIsin: row.assetIsin,
+          resolutionStatus: resolution.status,
+          resolutionReason: resolution.resolutionReason,
+          matchStrategy: resolution.identityStrategy,
           ...sourceContext,
         });
       }
@@ -899,8 +1430,13 @@ export const adminRepository = {
       if (accountsCreated.length) {
         await db.accounts.bulkAdd(accountsCreated);
       }
-      if (assetsCreated.length) {
-        await db.assets.bulkAdd(assetsCreated);
+      const assetsToPersist = Array.from(
+        new Map(
+          [...assetsCreated, ...updatedAssets.values()].map((asset) => [asset.id, asset]),
+        ).values(),
+      );
+      if (assetsToPersist.length) {
+        await db.assets.bulkPut(assetsToPersist);
       }
       if (replacedSnapshotIds.length) {
         await db.positionSnapshots.bulkDelete(replacedSnapshotIds);
@@ -918,6 +1454,25 @@ export const adminRepository = {
         await db.transactions.bulkPut(syntheticTransactions);
       }
       if (options && importJobId) {
+        const syntheticImportRows: ImportRow[] = implicitZeroInputs.map((snapshot, index) => ({
+          id: buildImportRowId(importJobId!, rows.length + index + 1),
+          importJobId: importJobId!,
+          rowNumber: rows.length + index + 1,
+          fingerprint: `${snapshot.platformId}|${snapshot.accountId ?? ''}|${snapshot.assetId}|${snapshot.date}|0`,
+          canonicalFingerprint: `${snapshot.platformId}|${snapshot.accountId ?? ''}|${snapshot.assetId}|${snapshot.date}|0`,
+          status: 'IMPLICIT_CLOSE',
+          date: snapshot.date,
+          platformName:
+            existingPlatforms.find((platform) => platform.id === snapshot.platformId)?.name ??
+            platformsCreated.find((platform) => platform.id === snapshot.platformId)?.name,
+          accountName:
+            existingAccounts.find((account) => account.id === snapshot.accountId)?.name,
+          resolvedAssetId: snapshot.assetId,
+          qty: 0,
+          currency: snapshot.currency,
+          message: snapshot.note ?? 'Implicit close from monthly snapshot import.',
+          createdAt: timestamp + rows.length + index,
+        }));
         await db.importJobs.add(
           buildImportJob({
             id: importJobId,
@@ -925,35 +1480,25 @@ export const adminRepository = {
             status: 'IMPORTED',
             options,
             rowCount: rows.length,
-            parsedRowCount: rows.length,
-            errorCount: 0,
-            duplicateRowCount: 0,
-            summary: `${importedSnapshotCount} snapshot(s) imported and ${syntheticTransactionCount} synthetic transaction(s) rebuilt.`,
+            parsedRowCount: importedSnapshotCount,
+            errorCount: importRows.filter(
+              (row) =>
+                row.status === 'UNRESOLVED_ASSET' ||
+                row.status === 'AMBIGUOUS_ASSET' ||
+                row.status === 'ERROR',
+            ).length,
+            duplicateRowCount: importRows.filter(
+              (row) =>
+                row.status === 'DUPLICATE_IN_FILE' ||
+                row.status === 'SKIPPED_DUPLICATE_EXISTING',
+            ).length,
+            summary: `${importedSnapshotCount} snapshot(s) imported, ${implicitClosureCount} implicit close(s), ${duplicateExistingCount} duplicate(s) skipped, ${unresolvedCount} unresolved row(s), ${ambiguousCount} ambiguous row(s).`,
             importedAt: timestamp,
             platformId: snapshotsToUpsert[0]?.platformId,
             accountId: snapshotsToUpsert[0]?.accountId,
           }),
         );
-        await db.importRows.bulkPut(
-          rows.map((row, index) => {
-            const sourceContext = buildSourceContext(row, options);
-            return {
-              id: buildImportRowId(importJobId!, index + 1),
-              importJobId: importJobId!,
-              rowNumber: index + 1,
-              fingerprint: buildSnapshotFingerprint(row),
-              status: 'IMPORTED',
-              date: row.date,
-              platformName: row.platform,
-              accountName: options.targetAccountName,
-              assetSymbol: row.assetSymbol,
-              qty: row.qty,
-              currency: row.currency,
-              ...sourceContext,
-              createdAt: timestamp + index,
-            };
-          }),
-        );
+        await db.importRows.bulkPut([...importRows, ...syntheticImportRows]);
       }
     });
 
@@ -965,6 +1510,9 @@ export const adminRepository = {
       platformsCreated: platformsCreated.length,
       accountsCreated: accountsCreated.length,
       assetsCreated: assetsCreated.length,
+      duplicateExistingCount,
+      unresolvedCount,
+      ambiguousCount,
       duplicateSkipped,
     };
   },

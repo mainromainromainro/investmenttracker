@@ -1,266 +1,181 @@
-# Implementation Notes and TODOs
+# Implementation Notes
 
-## ✅ Completed
+Mise à jour: 2026-03-30
 
-### Core Architecture
-- [x] Vite + React + TypeScript setup with proper config
-- [x] Tailwind CSS + PostCSS configured
-- [x] React Router for navigation
-- [x] Dexie (IndexedDB) database with 5 tables
-- [x] Zustand store pattern for state management
-- [x] Repository layer for data access abstraction
-- [x] Feature-based folder structure
+## Objectif réel du dépôt
 
-### Data Model
-- [x] Platform, Asset, Transaction, PriceSnapshot, FxSnapshot types
-- [x] Computed types (Position, PortfolioSummary)
-- [x] Database schema with proper indexing (platformId, assetId, pair, date)
+Le dépôt sert à consolider des portefeuilles d'investissement importés depuis des CSV, avec un niveau de confiance suffisant pour:
 
-### Core Logic
-- [x] Position quantity calculation (BUY/SELL tracking)
-- [x] Latest price/FX rate retrieval by date
-- [x] Currency conversion to EUR with FX rates
-- [x] Portfolio aggregation (total, by platform, by type)
-- [x] Full test coverage for computations (4 test functions)
+- afficher des holdings exacts
+- valoriser en EUR
+- suivre un coût de revient partiel
+- remonter les trous de données
 
-### Pages
-- [x] Dashboard with KPIs, aggregations, positions table
-- [x] Platforms CRUD
-- [x] Assets CRUD (with type: ETF/STOCK/CRYPTO)
-- [x] Transactions CRUD with adaptive form based on transaction kind
-- [x] Price snapshots CRUD
-- [x] FX rates CRUD
-- [x] Settings (reset DB, seed data)
+Le projet n'est plus structuré comme un CRUD de démonstration. Le flux critique passe par l'import, la résolution d'identité et les calculs.
 
-### UI/UX
-- [x] Responsive layout with navigation bar
-- [x] Tailwind styling on all pages
-- [x] Form validation (required fields)
-- [x] Loading states
-- [x] Empty state messages
-- [x] Delete confirmations on reset
+## Architecture logique
 
-### Documentation
-- [x] Comprehensive README
-- [x] API documentation in data model section
-- [x] Architecture explanation
-- [x] Getting started guide
-- [x] Usage instructions
+### UI active
 
----
+- [src/features/dashboard/Dashboard.tsx](src/features/dashboard/Dashboard.tsx)
+- [src/features/settings/Settings.tsx](src/features/settings/Settings.tsx)
+- [src/features/import/CsvImportSection.tsx](src/features/import/CsvImportSection.tsx)
 
-## 📋 TODOs - Future Enhancements
+### Persistance
 
-### Validation
-- [ ] Integrate Zod schemas for runtime validation
-  - [ ] Platform schema
-  - [ ] Asset schema
-  - [ ] Transaction schema
-  - [ ] Price/FX snapshot schemas
-  - [ ] Form validation on submit
-  - [ ] Error messages in UI
+- [src/db/index.ts](src/db/index.ts) définit le schéma Dexie et les migrations jusqu'à `version(6)`
 
-### Features
-- [ ] Edit functionality for platforms, assets, transactions
-- [ ] Bulk import/export (CSV)
-- [ ] Search and filter on tables
-- [ ] Date range filters on dashboard
-- [ ] Pagination for large tables
-- [ ] Currency exchange rate API integration (replace manual entry)
-- [ ] Asset price API integration (yfinance, CoinGecko)
-- [ ] Transaction templates (recurring transactions)
+### Repositories critiques
 
-### Analytics
-- [ ] Charts/graphs (portfolio value over time, allocation pie)
-- [ ] Performance tracking (ROI, returns) - currently out of scope
-- [ ] Cost basis tracking for tax purposes
-- [ ] Dividend/interest tracking
-- [ ] Rebalancing suggestions
+- [src/repositories/adminRepository.ts](src/repositories/adminRepository.ts)
+  - reset / seed
+  - import de transactions normalisées
+  - import de snapshots mensuels
+  - audit trail d'import
+  - création conditionnelle de plateformes, comptes, actifs, prix, snapshots
+- repositories CRUD simples
+  - `assetRepository`
+  - `platformRepository`
+  - `accountRepository`
+  - `transactionRepository`
+  - `priceRepository`
+  - `fxRepository`
+  - `importJobRepository`
+  - `importRowRepository`
 
-### Multi-Portfolio
-- [ ] Support multiple portfolios/accounts
-- [ ] Portfolio comparison
-- [ ] Copy portfolio functionality
+### Bibliothèques métier
 
-### Advanced
-- [ ] Backend integration (Supabase) - architecture supports this
-- [ ] Cloud backup/sync
-- [ ] Multi-device sync
-- [ ] User authentication
-- [ ] Collaboration (shared portfolios)
+- [src/lib/csvImport.ts](src/lib/csvImport.ts)
+  - mapping de colonnes
+  - parsing de transactions et de snapshots
+  - alias de colonnes
+  - transport des métadonnées d'import
+- [src/lib/csvSourceProfiles.ts](src/lib/csvSourceProfiles.ts)
+  - détection de sources connues
+  - extraction de la section `Open Position Summary` pour IBKR
+- [src/lib/assetIdentity.ts](src/lib/assetIdentity.ts)
+  - normalisation `ISIN`, ticker courtier, exchange et devise
+  - construction de la clé canonique
+- [src/lib/assetResolver.ts](src/lib/assetResolver.ts)
+  - match par ISIN
+  - match par clé canonique
+  - promotion des actifs legacy
+  - signalement des cas ambigus / non résolus
+- [src/lib/holdings.ts](src/lib/holdings.ts)
+  - calcul canonique des quantités
+  - exclusion des transactions snapshot quand une source transactionnelle explicite existe pour le même scope
+- [src/lib/computations.ts](src/lib/computations.ts)
+  - moteur branché sur le dashboard
+  - valorisation, PnL latent, coût de revient, dividendes, agrégations, historique
+- [src/lib/portfolioAnalytics.ts](src/lib/portfolioAnalytics.ts)
+  - moteur analytique plus ambitieux
+  - pas encore utilisé par l'UI principale
 
-### Performance & Infrastructure
-- [ ] Data compression for large databases
-- [ ] Archiving old transactions
-- [ ] Database export for backups
-- [ ] Offline sync queue
+## Invariants métier à préserver
 
-### Testing
-- [ ] E2E tests with Cypress/Playwright
-- [ ] Component tests with React Testing Library
-- [ ] Integration tests for stores
-- [ ] Performance benchmarks
+### Imports
 
-### Quality
-- [ ] Error boundary components
-- [ ] Logging/analytics
-- [ ] Better error messages
-- [ ] Loading skeletons
-- [ ] Dark mode support
-- [ ] Accessibility (ARIA labels)
-- [ ] Mobile optimization
+- un même fichier ne doit pas créer deux imports réels si son `fileFingerprint` a déjà été importé
+- une même ligne canonique ne doit pas générer de doublon même si elle revient via un autre import
+- toute ligne rejetée, ambiguë ou dédupliquée doit rester auditable
 
----
+### Identité d'actif
 
-## 🏗️ Architecture Notes
+- ne pas fusionner deux instruments distincts uniquement parce qu'ils partagent un symbole visible
+- préférer `ISIN` quand il est disponible
+- sinon s'appuyer sur la combinaison `brokerSymbol + exchange + currency`
+- les actifs legacy ne doivent être promus que de manière explicable
 
-### Strengths of Current Design
+### Holdings
 
-1. **Layered Architecture**: Easy to swap implementations (IndexedDB → Supabase)
-2. **Repository Pattern**: Data access is abstracted
-3. **Zustand Stores**: Simple, predictable state management
-4. **Feature Folders**: Clear organization, easy to scale
-5. **Testable Computations**: Core logic is pure functions
-6. **Type Safety**: Full TypeScript coverage
+- `BUY`, `TRANSFER_IN`, `STAKING_REWARD`, `AIRDROP` augmentent la quantité
+- `SELL`, `TRANSFER_OUT` diminuent la quantité
+- `DIVIDEND`, `DEPOSIT`, `WITHDRAW`, `FEE` n'affectent pas la quantité de holding
+- un snapshot mensuel ne doit pas s'ajouter naïvement à un ledger transactionnel existant
 
-### Potential Improvements for Production
+### Valorisation
 
-1. **Error Handling**: Currently minimal, should add try-catch in stores
-2. **Loading States**: Add loading spinners on forms
-3. **Cache Invalidation**: Manual refetch calls, could optimize
-4. **Input Validation**: Use Zod before database operations
-5. **Transaction Rollback**: IndexedDB transactions for data consistency
-6. **Optimistic Updates**: UI updates before server confirmation
+- la devise de valorisation suit le `PriceSnapshot` le plus récent
+- le FX est recherché sur la paire `<currency>/EUR`
+- si le prix ou le FX manque, la valeur reste partielle et la data quality doit le refléter
 
-### Migration Path to Supabase
+## État de l'UI
 
-1. Create `supabaseRepository.ts` alongside `platforms/assets/etc`
-2. Replace Dexie with Supabase client
-3. Stores remain the same (interface stays)
-4. Add authentication layer
-5. Add real-time listeners for sync
+### Ce qui est actif
 
----
+- import CSV avec aperçu et confirmation
+- refresh live des prix et du FX depuis le dashboard
+- seed et reset local
 
-## 🐛 Known Limitations
+### Ce qui existe mais n'est pas exposé
 
-1. **Single Portfolio**: Currently tracks one portfolio only (could extend)
-2. **No Performance Tracking**: App is for value only, not returns/ROI
-3. **Manual Data Entry**: All prices and FX rates are manual (could automate)
-4. **No Edit**: Can only delete and re-add (could add edit forms)
-5. **IndexedDB Limit**: ~50MB per origin (sufficient for most use cases)
-6. **No Offline Queue**: Changes require internet for Supabase migration
-7. **No Encryption**: Data stored in plain IndexedDB
+- écrans CRUD détaillés pour assets, plateformes, transactions, comptes, prix, FX
+- stores et repositories complets correspondants
 
----
+Cette distinction est importante: modifier un module "présent dans le repo" ne veut pas dire modifier une surface réellement utilisée.
 
-## 📊 Computation Examples
+## Dette et zones à surveiller
 
-### Example 1: VWRL ETF on DEGIRO
-- Platform: DEGIRO
-- Asset: VWRL (EUR currency)
-- Transactions: 100 shares @ 90.50 EUR
-- Latest Price: 95.75 EUR (latest snapshot)
-- FX Rate: 1 (EUR/EUR = 1)
-- **Value EUR: 100 × 95.75 × 1 = 9,575 EUR**
+### 1. Deux moteurs analytiques coexistent
 
-### Example 2: AAPL Stock on DEGIRO
-- Platform: DEGIRO
-- Asset: AAPL (USD currency)
-- Transactions: 10 shares @ 150 USD
-- Latest Price: 175.50 USD (latest snapshot)
-- FX Rate: 0.92 (USD/EUR latest snapshot)
-- **Value EUR: 10 × 175.50 × 0.92 = 1,614.60 EUR**
+- `computePortfolioSummary()` est celui utilisé par l'UI
+- `analyzePortfolio()` est plus riche mais non branché
 
-### Example 3: Portfolio Aggregation
-- Position 1 (VWRL): 9,575 EUR
-- Position 2 (AAPL): 1,614.60 EUR
-- Position 3 (BTC): 23,400 EUR
-- **Total: 34,589.60 EUR**
-- By Platform: DEGIRO (11,189.60), IB (23,400)
-- By Type: ETF (9,575), STOCK (1,614.60), CRYPTO (23,400)
+Avant de migrer vers le second, il faut définir:
 
----
+- la source de vérité cible
+- le plan de migration
+- les écarts de sémantique voulus
 
-## 🧪 Test Coverage
+### 2. Compte et plateforme
 
-### computations.test.ts
+Le modèle de données supporte bien `Account`, mais le dashboard principal n'expose pas encore une vraie lecture par compte avec libellés complets. Le modèle existe, l'UX dédiée reste à construire ou à reconnecter.
 
-#### ✅ computePositionQty
-- Correct qty calculation with BUY/SELL
-- Returns 0 for empty transactions
-- Handles partial sells correctly
+### 3. Résolution manuelle des ambiguïtés
 
-#### ✅ getLatestPrice
-- Returns latest price by date
-- Returns null for missing asset
-- Handles unsorted dates
+Les cas `AMBIGUOUS` ou `UNRESOLVED` sont portés dans les types et l'audit, mais il manque encore une vraie UI de revue manuelle.
 
-#### ✅ getLatestFxRate
-- Returns 1 for EUR
-- Returns latest rate by date
-- Defaults to 1 for missing pair
+### 4. Données live
 
-#### ✅ computeValueEUR
-- Computes value correctly
-- Returns 0 for null price
-- Handles zero quantity
+Le refresh Twelve Data dépend:
 
-### Integration Testing (Manual)
-- Full flow: create platform → asset → transaction → price → view dashboard
-- Aggregations update correctly when data changes
-- Delete functionality cascades appropriately
-- Sample data seed works end-to-end
+- de la couverture du provider
+- de la clé fournie
+- de la qualité des symboles utilisés pour l'appel
 
----
+Il ne faut pas considérer ce flux live comme une source de vérité comptable.
 
-## 🚀 Performance Considerations
+## Tests actuellement pertinents
 
-- **Computations**: O(n) where n = number of transactions
-  - For 10,000 transactions: <100ms on modern hardware
-  - Memoization in Dashboard prevents unnecessary recalculations
-  
-- **Database**: Dexie with proper indexes
-  - Queries by platformId, assetId, date use indexes
-  - Table scans only on computePortfolioSummary (acceptable for current data sizes)
+Le projet a des tests sur:
 
-- **UI Rendering**: React with Zustand (no heavy re-renders)
-  - Memoization on Dashboard
-  - Consider React.memo on table rows if > 1000 positions
+- `assetResolver`
+- `csvImport`
+- `csvSourceProfiles`
+- `holdings`
+- `computations`
+- `portfolioAnalytics`
+- `positionSnapshots`
+- `liveMarketData`
+- `dashboardAnalytics`
+- `importUx`
 
----
+Quand un changement touche l'import ou les holdings, les zones minimales à revalider sont:
 
-## 📁 File Size Reference
+```bash
+npm run test -- --run
+```
 
-| Component | Lines | Purpose |
-|-----------|-------|---------|
-| types/index.ts | ~60 | All data types |
-| db/index.ts | ~25 | Database setup |
-| computations.ts | ~120 | Core logic (testable) |
-| computations.test.ts | ~180 | Tests (19 assertions) |
-| Dashboard.tsx | ~140 | KPIs + tables |
-| Platforms/Assets/etc.tsx | ~100 | CRUD pages |
-| Stores (5x) | ~350 | State management |
-| Repositories (5x) | ~300 | Data access |
+Et avant d'annoncer un état stable:
 
-**Total: ~1,900 lines of TypeScript/React code**
+```bash
+npm run lint
+npm run build
+```
 
----
+## Priorités techniques recommandées
 
-## 🔍 Code Quality Checklist
-
-- [x] TypeScript strict mode enabled
-- [x] Proper error boundaries
-- [x] Loading states managed
-- [x] Responsive design
-- [x] Accessible forms
-- [x] Clean separation of concerns
-- [x] DRY components (PageHeading)
-- [x] Consistent naming conventions
-- [ ] ESLint fully configured (basic setup done)
-- [ ] Prettier configured (optional)
-- [ ] Pre-commit hooks (optional)
-
----
-
-Last Updated: 2026-01-28
+1. Clarifier la cible entre `computations.ts` et `portfolioAnalytics.ts`.
+2. Ajouter une UX de revue pour les actifs ambigus/non résolus.
+3. Exposer l'historique d'import persistant (`importJobs`, `importRows`) dans l'UI.
+4. Rebrancher ou supprimer explicitement les écrans CRUD hérités pour éviter l'ambiguïté produit.

@@ -1,11 +1,24 @@
-import { AssetType, ImportMode, TransactionKind } from '../types';
+import {
+  AssetType,
+  ImportMode,
+  ImportSourceAdapterId,
+  TransactionKind,
+} from '../types';
 import { detectCsvSourceProfile, extractInteractiveBrokersOpenPositionSummary, CsvSourceProfile } from './csvSourceProfiles';
 import { normalizeCsvToken, parseCsvRows } from './csvText';
+import {
+  normalizeBrokerSymbol,
+  normalizeExchange,
+  normalizeIsin,
+} from './assetIdentity';
 
 export type CsvHeader =
   | 'date'
   | 'platform'
   | 'asset_symbol'
+  | 'isin'
+  | 'broker_symbol'
+  | 'exchange'
   | 'asset_name'
   | 'asset_type'
   | 'currency'
@@ -28,12 +41,20 @@ export interface NormalizedTransactionRow {
   currency: string; // Asset / price currency
   cashCurrency?: string; // Settlement currency if different
   assetSymbol?: string;
+  assetIsin?: string;
+  brokerSymbol?: string;
+  exchange?: string;
   assetName?: string;
   assetType?: AssetType;
   qty?: number;
   price?: number;
   fee?: number;
   note?: string;
+  sourceAdapterId?: ImportSourceAdapterId;
+  sourceSection?: string;
+  sourceSignature?: string;
+  sourceRowRef?: string;
+  sourceRowNumber?: number;
 }
 
 export interface NormalizedPositionSnapshotRow {
@@ -41,11 +62,19 @@ export interface NormalizedPositionSnapshotRow {
   platform: string;
   currency: string;
   assetSymbol: string;
+  assetIsin?: string;
+  brokerSymbol?: string;
+  exchange?: string;
   assetName?: string;
   assetType?: AssetType;
   qty: number;
   price?: number;
   note?: string;
+  sourceAdapterId?: ImportSourceAdapterId;
+  sourceSection?: string;
+  sourceSignature?: string;
+  sourceRowRef?: string;
+  sourceRowNumber?: number;
 }
 
 export interface CsvParseResult<TRecord = NormalizedTransactionRow> {
@@ -81,6 +110,10 @@ export interface RecognizedCsvParseResult<TRecord = NormalizedTransactionRow | N
   records: TRecord[];
   errors: CsvParseError[];
   unsupportedSections: string[];
+  sourceAdapterId?: ImportSourceAdapterId;
+  sourceSection?: string;
+  sourceSignature?: string;
+  warnings: string[];
 }
 
 const TRANSACTION_KINDS: TransactionKind[] = [
@@ -116,6 +149,9 @@ export const NORMALIZED_TRANSACTION_HEADERS: CsvHeader[] = [
   ...BUY_SELL_HEADERS,
   'fee',
   'note',
+  'isin',
+  'broker_symbol',
+  'exchange',
 ];
 
 export const NORMALIZED_POSITION_SNAPSHOT_HEADERS: CsvHeader[] = [
@@ -128,6 +164,9 @@ export const NORMALIZED_POSITION_SNAPSHOT_HEADERS: CsvHeader[] = [
   'price',
   'currency',
   'note',
+  'isin',
+  'broker_symbol',
+  'exchange',
 ];
 
 export const CSV_IMPORT_FIELDS: CsvHeader[] = [
@@ -143,6 +182,9 @@ export const CSV_IMPORT_FIELDS: CsvHeader[] = [
   'cash_currency',
   'fee',
   'note',
+  'isin',
+  'broker_symbol',
+  'exchange',
 ];
 
 export const CSV_POSITION_SNAPSHOT_FIELDS: CsvHeader[] = [
@@ -155,6 +197,9 @@ export const CSV_POSITION_SNAPSHOT_FIELDS: CsvHeader[] = [
   'price',
   'currency',
   'note',
+  'isin',
+  'broker_symbol',
+  'exchange',
 ];
 
 const HEADER_ALIASES: Record<string, CsvHeader> = {
@@ -191,7 +236,17 @@ const HEADER_ALIASES: Record<string, CsvHeader> = {
   security_symbol: 'asset_symbol',
   security_code: 'asset_symbol',
   product_code: 'asset_symbol',
-  isin: 'asset_symbol',
+  broker_symbol: 'broker_symbol',
+  broker_ticker: 'broker_symbol',
+  market_symbol: 'broker_symbol',
+  isin: 'isin',
+  isin_code: 'isin',
+  exchange: 'exchange',
+  market: 'exchange',
+  venue: 'exchange',
+  stock_exchange: 'exchange',
+  place: 'exchange',
+  bourse: 'exchange',
   stock_name: 'asset_name',
   instrument_name: 'asset_name',
   security_name: 'asset_name',
@@ -280,7 +335,10 @@ const HEADER_GUESS_RULES: Array<{ header: CsvHeader; pattern: RegExp }> = [
   { header: 'date', pattern: /(?:^|_)(?:date|datetime|timestamp|execut(?:e|ed)|trade_date|transaction_date)(?:_|$)/ },
   { header: 'platform', pattern: /(?:^|_)(?:broker|platform|provider|source|account|courtier)(?:_|$)/ },
   { header: 'kind', pattern: /(?:^|_)(?:kind|side|action|operation|transaction|order)(?:_|$)/ },
-  { header: 'asset_symbol', pattern: /(?:^|_)(?:ticker|symbol|isin|instrument|security|product_code)(?:_|$)/ },
+  { header: 'asset_symbol', pattern: /(?:^|_)(?:ticker|symbol|instrument|security|product_code)(?:_|$)/ },
+  { header: 'broker_symbol', pattern: /(?:^|_)(?:broker_symbol|market_symbol)(?:_|$)/ },
+  { header: 'isin', pattern: /(?:^|_)(?:isin|isin_code)(?:_|$)/ },
+  { header: 'exchange', pattern: /(?:^|_)(?:exchange|venue|market|stock_exchange|bourse)(?:_|$)/ },
   { header: 'asset_name', pattern: /(?:^|_)(?:asset_name|instrument_name|security_name|company_name|description|label|libelle|name)(?:_|$)/ },
   { header: 'asset_type', pattern: /(?:^|_)(?:asset_type|assetclass|class|category|security_type|instrument_type)(?:_|$)/ },
   { header: 'currency', pattern: /(?:^|_)(?:currency|ccy|devise|quote_currency|price_currency)(?:_|$)/ },
@@ -506,6 +564,12 @@ const normalizeAssetSymbol = (value: string | undefined): string | undefined => 
   return trimmed || undefined;
 };
 
+const pickDisplayAssetSymbol = (
+  assetSymbol: string | undefined,
+  brokerSymbol: string | undefined,
+  assetIsin: string | undefined,
+) => assetSymbol ?? brokerSymbol ?? assetIsin;
+
 const normalizeAssetName = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -674,6 +738,8 @@ const scoreFieldWithProfile = (
     case 'fee':
       return profile.numberRatio * 0.45;
     case 'asset_symbol':
+    case 'broker_symbol':
+    case 'isin':
       return profile.symbolRatio * 0.45;
     default:
       return 0;
@@ -682,6 +748,94 @@ const scoreFieldWithProfile = (
 
 export const buildCsvHeaderSignature = (headers: string[]): string =>
   headers.map((header) => normalizeHeader(header) as string).join('|');
+
+const normalizeNumberFingerprintPart = (value: number | undefined) =>
+  value === undefined ? '' : Number(value.toFixed(12)).toString();
+
+const getRowValueByNormalizedHeader = (
+  rawHeaders: string[],
+  rawRow: string[] | undefined,
+  headerName: string,
+) => {
+  if (!rawRow) return undefined;
+  const target = normalizeHeader(headerName) as string;
+  const index = rawHeaders.findIndex(
+    (header) => (normalizeHeader(header) as string) === target,
+  );
+  if (index === -1) return undefined;
+  return rawRow[index];
+};
+
+const buildTrading212SourceRowRef = (
+  rawHeaders: string[],
+  rawRow: string[] | undefined,
+  row: NormalizedTransactionRow,
+) => {
+  const nativeId = getRowValueByNormalizedHeader(rawHeaders, rawRow, 'id')?.trim();
+  if (nativeId) {
+    return `trading212:${nativeId}`;
+  }
+
+  return [
+    'trading212',
+    row.date,
+    row.kind,
+    row.assetIsin ?? '',
+    row.brokerSymbol ?? row.assetSymbol ?? '',
+    normalizeNumberFingerprintPart(row.qty),
+    normalizeNumberFingerprintPart(row.price),
+  ].join(':');
+};
+
+const buildRevolutSourceRowRef = (
+  rawHeaders: string[],
+  rawRow: string[] | undefined,
+  row: NormalizedTransactionRow,
+) =>
+  [
+    'revolut_stock',
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'date')?.trim() ?? row.date,
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'ticker')?.trim() ??
+      row.brokerSymbol ??
+      row.assetSymbol ??
+      '',
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'type')?.trim() ?? row.kind,
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'quantity')?.trim() ??
+      normalizeNumberFingerprintPart(row.qty),
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'price_per_share')?.trim() ??
+      normalizeNumberFingerprintPart(row.price),
+    getRowValueByNormalizedHeader(rawHeaders, rawRow, 'total_amount')?.trim() ?? '',
+  ].join(':');
+
+const annotateRecognizedTransactionRows = (
+  rows: NormalizedTransactionRow[],
+  args: {
+    sourceAdapterId: ImportSourceAdapterId;
+    sourceSection: string;
+    sourceSignature: string;
+    rawRows: string[][];
+    buildSourceRowRef: (
+      rawHeaders: string[],
+      rawRow: string[] | undefined,
+      row: NormalizedTransactionRow,
+    ) => string;
+  },
+): NormalizedTransactionRow[] => {
+  const rawHeaders = args.rawRows[0] ?? [];
+
+  return rows.map((row) => {
+    const rawRow =
+      typeof row.sourceRowNumber === 'number' ? args.rawRows[row.sourceRowNumber - 1] : undefined;
+
+    return {
+      ...row,
+      sourceAdapterId: args.sourceAdapterId,
+      sourceSection: args.sourceSection,
+      sourceSignature: args.sourceSignature,
+      sourceRowRef: args.buildSourceRowRef(rawHeaders, rawRow, row),
+    };
+  });
+};
 
 export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSuggestion => {
   const rows = parseCsv(csvText);
@@ -703,6 +857,9 @@ export const suggestCsvColumnMapping = (csvText: string): CsvColumnMappingSugges
     platform: null,
     kind: null,
     asset_symbol: null,
+    isin: null,
+    broker_symbol: null,
+    exchange: null,
     asset_name: null,
     asset_type: null,
     qty: null,
@@ -858,6 +1015,8 @@ export const parseInteractiveBrokersOpenPositionSummaryCsv = (
 
   const fallbackCurrency = options?.defaultCurrency ?? DEFAULT_CURRENCY;
   const fallbackPlatform = normalizePlatform(options?.defaultPlatform) ?? 'Interactive Brokers';
+  const sourceSection = extraction.section.name;
+  const sourceSignature = buildCsvHeaderSignature(extraction.section.headers);
   const headerIndex = new Map(
     extraction.section.headers.map((header, index) => [normalizeHeader(header) as string, index]),
   );
@@ -931,11 +1090,24 @@ export const parseInteractiveBrokersOpenPositionSummaryCsv = (
       platform: fallbackPlatform,
       currency,
       assetSymbol: symbol,
+      brokerSymbol: symbol,
       assetName: assetName || symbol,
       assetType: assetType ?? 'STOCK',
       qty: qtyValue,
       price: priceValue ?? undefined,
       note: cells.description || undefined,
+      sourceAdapterId: 'interactive_brokers_open_position_summary',
+      sourceSection,
+      sourceSignature,
+      sourceRowRef: [
+        'interactive_brokers_open_position_summary',
+        rowIndex,
+        date,
+        symbol,
+        normalizeNumberFingerprintPart(qtyValue),
+        currency,
+      ].join(':'),
+      sourceRowNumber: rowIndex,
     });
   }
 
@@ -950,6 +1122,9 @@ export const parseRecognizedInvestmentCsv = (
 ): RecognizedCsvParseResult => {
   const detection = detectCsvSourceProfile(csvText, options?.fileName);
   const defaultPlatform = options?.defaultPlatform ?? detection.platformName ?? undefined;
+  const rawRows = parseCsv(csvText);
+  const rawHeaders = rawRows[0] ?? [];
+  const flatSourceSignature = buildCsvHeaderSignature(rawHeaders);
   const unsupportedSections =
     detection.sourceProfile === 'interactive_brokers'
       ? extractInteractiveBrokersOpenPositionSummary(csvText).unsupportedSections
@@ -967,6 +1142,12 @@ export const parseRecognizedInvestmentCsv = (
       records: result.records,
       errors: result.errors,
       unsupportedSections,
+      sourceAdapterId: 'interactive_brokers_open_position_summary',
+      sourceSection: 'Open Position Summary',
+      sourceSignature: result.records[0]?.sourceSignature ?? undefined,
+      warnings: unsupportedSections.length
+        ? [`Sections IBKR ignorées: ${unsupportedSections.join(', ')}.`]
+        : [],
     };
   }
 
@@ -976,14 +1157,39 @@ export const parseRecognizedInvestmentCsv = (
       defaultPlatform,
       columnMapping: options?.columnMapping,
     });
+    const sourceAdapterId =
+      detection.sourceProfile === 'trading212'
+        ? 'trading212_transactions'
+        : 'revolut_stock_transactions';
+    const sourceSection = 'Transactions';
+    const records =
+      detection.sourceProfile === 'trading212'
+        ? annotateRecognizedTransactionRows(result.records, {
+            sourceAdapterId,
+            sourceSection,
+            sourceSignature: flatSourceSignature,
+            rawRows,
+            buildSourceRowRef: buildTrading212SourceRowRef,
+          })
+        : annotateRecognizedTransactionRows(result.records, {
+            sourceAdapterId,
+            sourceSection,
+            sourceSignature: flatSourceSignature,
+            rawRows,
+            buildSourceRowRef: buildRevolutSourceRowRef,
+          });
 
     return {
       sourceProfile: detection.sourceProfile,
       platformName: detection.platformName,
       mode: 'transactions',
-      records: result.records,
+      records,
       errors: result.errors,
       unsupportedSections,
+      sourceAdapterId,
+      sourceSection,
+      sourceSignature: flatSourceSignature,
+      warnings: [],
     };
   }
 
@@ -1018,6 +1224,8 @@ export const parseRecognizedInvestmentCsv = (
     records: preferredResult.records,
     errors: preferredResult.errors,
     unsupportedSections,
+    sourceSignature: flatSourceSignature || undefined,
+    warnings: detection.sourceProfile === 'unknown' ? detection.reasons : [],
   };
 };
 
@@ -1107,7 +1315,8 @@ export const parseNormalizedTransactionsCsv = (
       rowErrors.push(`Devise invalide: "${cells.currency}". Utilisez un code ISO (EUR, USD...).`);
     }
 
-    const inferredCurrency = providedCurrency ?? inferCurrencyFromSymbol(cells.asset_symbol);
+    const inferredCurrency =
+      providedCurrency ?? inferCurrencyFromSymbol(cells.asset_symbol ?? cells.broker_symbol);
     const normalizedPrice = normalizeQuotedPrice(
       parseFloatSafe(cells.price),
       inferredCurrency ?? fallbackCurrency,
@@ -1147,7 +1356,11 @@ export const parseNormalizedTransactionsCsv = (
     }
 
     const note = normalizeNote(cells.note);
+    const assetIsin = normalizeIsin(cells.isin);
+    const explicitBrokerSymbol = normalizeBrokerSymbol(cells.broker_symbol);
     const assetSymbol = normalizeAssetSymbol(cells.asset_symbol);
+    const brokerSymbol = explicitBrokerSymbol ?? assetSymbol;
+    const exchange = normalizeExchange(cells.exchange);
     const assetName = normalizeAssetName(cells.asset_name);
     let assetType: AssetType | undefined;
     const normalizedAssetType = normalizeAssetType(cells.asset_type);
@@ -1177,8 +1390,8 @@ export const parseNormalizedTransactionsCsv = (
     const requiresPrice = kind === 'BUY' || kind === 'SELL';
 
     if (requiresAsset) {
-      if (!assetSymbol) {
-        rowErrors.push(`asset_symbol est requis pour ${kind}.`);
+      if (!pickDisplayAssetSymbol(assetSymbol, brokerSymbol, assetIsin)) {
+        rowErrors.push(`asset_symbol, broker_symbol ou isin est requis pour ${kind}.`);
       }
       if (requiresQuantity && (qtyValue === null || qtyValue <= 0)) {
         rowErrors.push(`qty doit être positif pour ${kind}.`);
@@ -1202,13 +1415,17 @@ export const parseNormalizedTransactionsCsv = (
       kind: kind!,
       currency: currency!,
       cashCurrency,
-      assetSymbol: assetSymbol,
-      assetName: assetName || assetSymbol,
+      assetSymbol: pickDisplayAssetSymbol(assetSymbol, brokerSymbol, assetIsin),
+      assetIsin,
+      brokerSymbol,
+      exchange,
+      assetName: assetName || pickDisplayAssetSymbol(assetSymbol, brokerSymbol, assetIsin),
       assetType,
       qty: qtyValue ?? undefined,
       price: priceValue ?? undefined,
       fee: feeValue ?? undefined,
       note,
+      sourceRowNumber: rowIndex,
     });
   }
 
@@ -1233,10 +1450,16 @@ export const parseNormalizedPositionSnapshotsCsv = (
   const inferredCanonicalHeaders = normalizedHeaders.map(
     (header) => inferHeaderAlias(header) ?? header,
   );
+  const snapshotIdentifierHeadersPresent =
+    inferredCanonicalHeaders.includes('asset_symbol') ||
+    inferredCanonicalHeaders.includes('broker_symbol') ||
+    inferredCanonicalHeaders.includes('isin');
   const automaticMapping = buildAutomaticColumnMapping(
     csvText,
     inferredCanonicalHeaders,
-    POSITION_SNAPSHOT_REQUIRED_HEADERS,
+    snapshotIdentifierHeadersPresent
+      ? POSITION_SNAPSHOT_REQUIRED_HEADERS.filter((header) => header !== 'asset_symbol')
+      : POSITION_SNAPSHOT_REQUIRED_HEADERS,
   );
   const canonicalHeaders = applyColumnMappingOverrides(
     rawHeaders,
@@ -1248,9 +1471,16 @@ export const parseNormalizedPositionSnapshotsCsv = (
   );
   const hasPlatformColumn = canonicalHeaders.includes('platform');
 
-  const missingHeaders = POSITION_SNAPSHOT_REQUIRED_HEADERS.filter(
-    (header) => !canonicalHeaders.includes(header),
-  );
+  const missingHeaders = POSITION_SNAPSHOT_REQUIRED_HEADERS.filter((header) => {
+    if (header !== 'asset_symbol') {
+      return !canonicalHeaders.includes(header);
+    }
+    return !(
+      canonicalHeaders.includes('asset_symbol') ||
+      canonicalHeaders.includes('broker_symbol') ||
+      canonicalHeaders.includes('isin')
+    );
+  });
 
   if (missingHeaders.length > 0) {
     return {
@@ -1297,9 +1527,14 @@ export const parseNormalizedPositionSnapshotsCsv = (
       rowErrors.push('La colonne date doit contenir une date valide (ISO ou timestamp).');
     }
 
+    const assetIsin = normalizeIsin(cells.isin);
+    const explicitBrokerSymbol = normalizeBrokerSymbol(cells.broker_symbol);
     const assetSymbol = normalizeAssetSymbol(cells.asset_symbol);
-    if (!assetSymbol) {
-      rowErrors.push('asset_symbol est requis pour un snapshot de position.');
+    const brokerSymbol = explicitBrokerSymbol ?? assetSymbol;
+    const exchange = normalizeExchange(cells.exchange);
+    const displayAssetSymbol = pickDisplayAssetSymbol(assetSymbol, brokerSymbol, assetIsin);
+    if (!displayAssetSymbol) {
+      rowErrors.push('asset_symbol, broker_symbol ou isin est requis pour un snapshot de position.');
     }
 
     const qtyValue = parseFloatSafe(cells.qty);
@@ -1322,7 +1557,10 @@ export const parseNormalizedPositionSnapshotsCsv = (
     if (priceValue !== null && priceValue < 0) {
       rowErrors.push('price doit etre positif ou nul pour un snapshot de position.');
     }
-    const inferredCurrency = normalizedPrice.currency ?? providedCurrency ?? inferCurrencyFromSymbol(assetSymbol);
+    const inferredCurrency =
+      normalizedPrice.currency ??
+      providedCurrency ??
+      inferCurrencyFromSymbol(assetSymbol ?? brokerSymbol);
     const currency = inferredCurrency ?? fallbackCurrency;
     if (!currency) {
       rowErrors.push('Impossible de determiner la devise de la ligne.');
@@ -1350,12 +1588,16 @@ export const parseNormalizedPositionSnapshotsCsv = (
       date: date!,
       platform: platform!,
       currency: currency!,
-      assetSymbol: assetSymbol!,
-      assetName: assetName || assetSymbol!,
+      assetSymbol: displayAssetSymbol!,
+      assetIsin,
+      brokerSymbol,
+      exchange,
+      assetName: assetName || displayAssetSymbol!,
       assetType,
       qty: qtyValue!,
       price: priceValue ?? undefined,
       note,
+      sourceRowNumber: rowIndex,
     });
   }
 

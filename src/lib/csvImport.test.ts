@@ -262,6 +262,8 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records[0]?.kind).toBe('BUY');
     expect(result.records[0]?.platform).toBe('Trading 212');
     expect(result.records[0]?.assetSymbol).toBe('VUSA');
+    expect(result.records[0]?.assetIsin).toBe('IE00B3XXRP09');
+    expect(result.records[0]?.brokerSymbol).toBe('VUSA');
     expect(result.records[0]?.qty).toBeCloseTo(0.048592, 6);
     expect(result.records[0]?.price).toBeCloseTo(108.246, 3);
     expect(result.records[1]?.kind).toBe('DEPOSIT');
@@ -287,6 +289,26 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.records[1]?.kind).toBe('BUY');
     expect(result.records[1]?.qty).toBeCloseTo(0.04872107, 8);
     expect(result.records[1]?.price).toBeCloseTo(82.1, 2);
+  });
+
+  it('annotates a recognized Trading 212 import with adapter metadata and native source row refs', () => {
+    const csv = buildCsv([
+      'Action,Time,ISIN,Ticker,Name,Notes,ID,No. of shares,Price / share,Currency (Price / share),Exchange rate,Result,Currency (Result),Total,Currency (Total)',
+      'Market buy,2025-01-03 12:09:50.447,IE00B3XXRP09,VUSA,Vanguard S&P 500,,EOF25960930110,0.0485920000,108.246000,EUR,1.00000000,,EUR,5.26,EUR',
+    ]);
+
+    const result = parseRecognizedInvestmentCsv(csv, {
+      defaultPlatform: 'Trading 212',
+      fileName: 'trading212_export.csv',
+    });
+
+    expect(result.mode).toBe('transactions');
+    expect(result.sourceAdapterId).toBe('trading212_transactions');
+    expect(result.sourceSection).toBe('Transactions');
+    expect(result.sourceSignature).toContain('action|time|isin|ticker');
+    const record = result.records[0];
+    expect(record?.sourceAdapterId).toBe('trading212_transactions');
+    expect(record?.sourceRowRef).toBe('trading212:EOF25960930110');
   });
 
   it('ignores result adjustment rows that are not useful for investment tracking', () => {
@@ -324,10 +346,31 @@ describe('parseNormalizedTransactionsCsv', () => {
     expect(result.mode).toBe('monthly_positions');
     expect(result.records).toHaveLength(1);
     expect(result.records[0]?.assetSymbol).toBe('DCAM');
+    expect(result.records[0]?.brokerSymbol).toBe('DCAM');
     expect(result.records[0]?.qty).toBe(477);
+    expect(result.sourceAdapterId).toBe('interactive_brokers_open_position_summary');
+    expect(result.sourceSection).toBe('Open Position Summary');
+    expect(result.records[0]?.sourceRowRef).toContain(
+      'interactive_brokers_open_position_summary',
+    );
     expect(result.unsupportedSections).toContain('Introduction');
     expect(result.unsupportedSections).toContain('Trade Summary');
     expect(result.errors[0]?.message).toContain('Sections IBKR ignorées');
+    expect(result.warnings[0]).toContain('Sections IBKR ignorées');
+  });
+
+  it('keeps ISIN separate from the display symbol when both are present', () => {
+    const csv = buildCsv([
+      'date,platform,kind,asset_symbol,isin,qty,price,currency',
+      '2025-04-02,Trading 212,BUY,VUSA,IE00B3XXRP09,2,100,EUR',
+    ]);
+
+    const result = parseNormalizedTransactionsCsv(csv);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records[0]?.assetSymbol).toBe('VUSA');
+    expect(result.records[0]?.assetIsin).toBe('IE00B3XXRP09');
+    expect(result.records[0]?.brokerSymbol).toBe('VUSA');
   });
 });
 
@@ -365,6 +408,21 @@ describe('parseNormalizedPositionSnapshotsCsv', () => {
     expect(result.records).toHaveLength(1);
     expect(result.records[0]?.platform).toBe('Interactive Brokers');
     expect(result.records[0]?.price).toBeUndefined();
+  });
+
+  it('accepts position snapshots identified by ISIN even when asset_symbol is absent', () => {
+    const csv = buildCsv([
+      'date,isin,qty,currency',
+      '2025-03-31,IE00B3XXRP09,5,EUR',
+    ]);
+
+    const result = parseNormalizedPositionSnapshotsCsv(csv, {
+      defaultPlatform: 'Trading 212',
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.records[0]?.assetIsin).toBe('IE00B3XXRP09');
+    expect(result.records[0]?.assetSymbol).toBe('IE00B3XXRP09');
   });
 
   it('auto-detects required snapshot columns when headers are unconventional', () => {

@@ -1,83 +1,72 @@
-# CSV Import + Holdings Rollout Plan (Canonical)
+# CSV Import + Holdings Plan
 
-## Objective
+Mise à jour: 2026-03-30
 
-Make CSV ingestion and holdings tracking trustworthy before adding valuation and performance.
+## Objectif
 
-V1 output:
+Rendre l'import CSV et le calcul de holdings suffisamment fiables pour servir de base au portefeuille, à la valorisation et aux analytics.
 
-- holdings quantities per account + platform + ticker
-- portfolio-level consolidation by ticker in the UI
-- explicit audit trail for imported/ignored/rejected rows
+## État actuel
 
-## Locked Decisions
+### Déjà en place
 
-- Priority sources: Trading 212, Interactive Brokers, Revolut Stock
-- V1 identity key: ticker
-- Secondary metadata: ISIN, name, currency (store when present, do not block V1)
-- IBKR V1: treat exports as sectioned reports and use "Open Position Summary" as the authoritative holdings source
+- détection de sources connues:
+  - Trading 212
+  - Revolut Stock
+  - Interactive Brokers `Open Position Summary`
+- double mode d'import:
+  - `transactions`
+  - `monthly_positions`
+- audit trail avec `ImportJob` et `ImportRow`
+- déduplication par fichier et par empreinte canonique
+- scope par plateforme et compte
+- moteur de holdings canonique dans [src/lib/holdings.ts](src/lib/holdings.ts)
+- import de snapshots mensuels avec remplacement ciblé et transactions synthétiques
+- tests dédiés sur import, holdings, snapshots et analytics
 
-## Source Notes
+### En cours de durcissement
 
-### Trading 212
+- identité canonique des actifs
+- résolution d'actifs à l'import
+- promotion contrôlée des actifs legacy
+- couverture de tests autour des cas ambigus/non résolus
 
-- Transactional CSV: BUY/SELL/DEPOSIT/FEE rows.
-- Ticker present for investment rows.
-- ISIN present for investment rows.
+## Décision mise à jour
 
-### Revolut Stock
+L'ancien cadrage "V1 identity key: ticker" n'est plus suffisant pour l'état actuel du produit.
 
-- Transactional CSV: BUY rows and DIVIDEND rows.
-- Ticker always present.
+La stratégie à retenir désormais est:
 
-### Interactive Brokers (IBKR)
+1. `ISIN` si disponible
+2. sinon clé canonique dérivée de `brokerSymbol + exchange + currency`
+3. sinon repli legacy explicite et auditable
 
-The provided file is a performance report (multi-section), not a flat ledger.
+Autrement dit: le ticker seul n'est plus une source d'identité assez sûre.
 
-Supported V1 section:
+## Chantiers restants
 
-- "Open Position Summary" -> holdings snapshot by Symbol + Quantity.
+### Priorité haute
 
-Explicitly out of scope for V1:
+- UI de revue pour les actifs `AMBIGUOUS` et `UNRESOLVED`
+- exposition de l'historique d'import persistant dans l'interface
+- clarification de la cible entre `computePortfolioSummary` et `portfolioAnalytics`
 
-- attempting to compute holdings from benchmark/performance sections
-- treating the file as a single header + rows CSV
+### Priorité moyenne
 
-## Phases
+- mémoire de mapping plus visible pour les CSV custom
+- parcours d'import plus guidé pour les erreurs bloquantes
+- vue par compte réellement exposée dans le dashboard
 
-### Phase 0: Stabilize and make failures visible
+### Plus tard
 
-- Add fixture-based tests from real exports (Trading 212, Revolut, IBKR section sample).
-- Add import preview summaries: detected source, selected section, accepted/ignored/rejected counts.
-- Ensure unsupported IBKR sections are ignored explicitly.
+- enrichissement métadonnées actifs
+- analytics de performance multi-périodes
+- outils de réconciliation manuelle
 
-### Phase 1: Holdings Engine V1 (quantity only)
+## Critères de confiance à maintenir
 
-- Canonical holdings computation:
-  - quantity delta: BUY positive, SELL negative
-  - DIVIDEND/DEPOSIT/WITHDRAW/FEE do not affect holdings quantity
-- Dashboard must use the canonical holdings engine results for quantities.
-- Ensure account/platform scoping is correct (no leakage into default scope).
-
-### Phase 2: Onboarding V2 (review-driven import)
-
-- Multi-step import UX:
-  - upload, source detection, mapping review, preview, confirm
-- Persist source profile/mapping memory and reapply on next import.
-
-### Phase 3+: Valuation and performance (later)
-
-- Valuation: prices and EUR conversion + coverage.
-- Performance: PRU, unrealized/realized PnL, dividends, fees, transfers/swaps.
-
-## Acceptance Criteria (V1)
-
-- Trading 212 multi-ticker import never collapses to a single holding.
-- Revolut dividends do not affect holdings quantities.
-- IBKR sample: importing "Open Position Summary" yields ticker "DCAM" quantity 477.
-- Duplicate imports are idempotent (auditable, not double-counted).
-
-## Governance
-
-See [CENTRAL_GOVERNANCE.md](/Users/romain/Investment%20Tracker/CENTRAL_GOVERNANCE.md) for execution checklist, gates, and reviewer rubric.
-
+- importer deux fois le même fichier ne double pas les positions
+- un snapshot mensuel ne casse pas un ledger transactionnel existant sur le même scope
+- un import multi-tickers ne s'effondre pas en un seul actif
+- une ambiguïté d'actif n'est jamais résolue silencieusement
+- toute ligne rejetée ou dédupliquée reste retraçable

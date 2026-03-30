@@ -25,6 +25,11 @@ export type TransactionSource =
   | 'CSV_TRANSACTION'
   | 'POSITION_SNAPSHOT'
   | 'CSV_SNAPSHOT';
+export type AssetIdentityStrategy =
+  | 'ISIN'
+  | 'BROKER_SYMBOL_EXCHANGE_CURRENCY'
+  | 'LEGACY_UNVERIFIED';
+export type AssetResolutionStatus = 'RESOLVED' | 'AMBIGUOUS' | 'UNRESOLVED';
 export type ImportMode = 'transactions' | 'monthly_positions';
 export type ImportSourceProfile =
   | 'broker_export'
@@ -32,22 +37,38 @@ export type ImportSourceProfile =
   | 'wallet_export'
   | 'monthly_statement'
   | 'custom';
+export type ImportSourceAdapterId =
+  | 'trading212_transactions'
+  | 'revolut_stock_transactions'
+  | 'interactive_brokers_open_position_summary';
 export type ImportJobStatus = 'PENDING' | 'IMPORTED' | 'DUPLICATE' | 'FAILED';
 export type ImportRowStatus =
   | 'READY'
   | 'IMPORTED'
   | 'DUPLICATE_IN_FILE'
+  | 'SKIPPED_DUPLICATE_EXISTING'
   | 'SKIPPED_DUPLICATE_IMPORT'
+  | 'MERGED_IN_FILE'
+  | 'IMPLICIT_CLOSE'
+  | 'AMBIGUOUS_ASSET'
+  | 'UNRESOLVED_ASSET'
   | 'ERROR';
 
 export interface ImportSourceAuditFields {
+  sourceAdapterId?: ImportSourceAdapterId;
   sourceTemplateId?: string;
   sourceSection?: string;
   sourceSignature?: string;
+  sourceRowRef?: string;
   sourceTicker?: string;
+  sourceBrokerSymbol?: string;
+  sourceExchange?: string;
   sourceIsin?: string;
   sourceName?: string;
   sourceCurrency?: string;
+  resolutionStatus?: AssetResolutionStatus;
+  resolutionReason?: string;
+  matchStrategy?: AssetIdentityStrategy;
   sourceRaw?: Record<string, string>;
 }
 
@@ -79,6 +100,12 @@ export interface Asset {
   symbol: string;
   name: string;
   currency: string; // e.g., 'USD', 'EUR', 'GBP'
+  canonicalAssetKey?: string;
+  identityStrategy?: AssetIdentityStrategy;
+  identityStatus?: AssetResolutionStatus;
+  isin?: string;
+  brokerSymbol?: string;
+  exchange?: string;
   createdAt: number;
 }
 
@@ -160,11 +187,14 @@ export interface ImportRow extends ImportSourceContext {
   importJobId: string;
   rowNumber: number;
   fingerprint: string;
+  canonicalFingerprint?: string;
   status: ImportRowStatus;
   date?: number;
   platformName?: string;
   accountName?: string;
   assetSymbol?: string;
+  resolvedAssetId?: string;
+  duplicateOfImportRowId?: string;
   kind?: TransactionKind;
   qty?: number;
   currency?: string;

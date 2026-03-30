@@ -1,82 +1,79 @@
-# Files Structure & Paths
+# File Guide
 
-## Configuration Files
-- [package.json](/Users/romain/Investment%20Tracker/package.json)
-- [vite.config.ts](/Users/romain/Investment%20Tracker/vite.config.ts)
-- [tsconfig.json](/Users/romain/Investment%20Tracker/tsconfig.json)
-- [tsconfig.node.json](/Users/romain/Investment%20Tracker/tsconfig.node.json)
-- [vitest.config.ts](/Users/romain/Investment%20Tracker/vitest.config.ts)
-- [tailwind.config.js](/Users/romain/Investment%20Tracker/tailwind.config.js)
-- [postcss.config.js](/Users/romain/Investment%20Tracker/postcss.config.js)
-- [eslint.config.js](/Users/romain/Investment%20Tracker/eslint.config.js)
-- [index.html](/Users/romain/Investment%20Tracker/index.html)
-- [.gitignore](/Users/romain/Investment%20Tracker/.gitignore)
+Mise à jour: 2026-03-30
 
-## Documentation
-- [README.md](/Users/romain/Investment%20Tracker/README.md) - Main documentation
-- [IMPLEMENTATION_NOTES.md](/Users/romain/Investment%20Tracker/IMPLEMENTATION_NOTES.md) - Architecture & TODOs
-- [PROJECT_SUMMARY.md](/Users/romain/Investment%20Tracker/PROJECT_SUMMARY.md) - Deliverables summary
-- [FINARY_BOURSE_CRYPTO_ALIGNMENT.md](/Users/romain/Investment%20Tracker/FINARY_BOURSE_CRYPTO_ALIGNMENT.md) - Product alignment and roadmap vs Finary (stocks + crypto)
-- [FILES.md](/Users/romain/Investment%20Tracker/FILES.md) - This file
+Ce fichier sert de plan de navigation rapide pour un agent ou un développeur qui reprend le dépôt.
 
-## Source Code
+## Entrées principales
 
-### Types & Database
-- [src/types/index.ts](/Users/romain/Investment%20Tracker/src/types/index.ts) - All TypeScript types
-- [src/db/index.ts](/Users/romain/Investment%20Tracker/src/db/index.ts) - Dexie database setup
+- [package.json](package.json) -> scripts et dépendances
+- [src/App.tsx](src/App.tsx) -> routes réellement actives
+- [src/features/dashboard/Dashboard.tsx](src/features/dashboard/Dashboard.tsx) -> surface de lecture principale
+- [src/features/settings/Settings.tsx](src/features/settings/Settings.tsx) -> surface d'administration et d'import
 
-### Repositories (Data Access Layer)
-- [src/repositories/index.ts](/Users/romain/Investment%20Tracker/src/repositories/index.ts) - Exports
-- [src/repositories/platformRepository.ts](/Users/romain/Investment%20Tracker/src/repositories/platformRepository.ts) - Platform CRUD
-- [src/repositories/assetRepository.ts](/Users/romain/Investment%20Tracker/src/repositories/assetRepository.ts) - Asset CRUD
-- [src/repositories/transactionRepository.ts](/Users/romain/Investment%20Tracker/src/repositories/transactionRepository.ts) - Transaction CRUD
-- [src/repositories/priceRepository.ts](/Users/romain/Investment%20Tracker/src/repositories/priceRepository.ts) - Price snapshot CRUD
-- [src/repositories/fxRepository.ts](/Users/romain/Investment%20Tracker/src/repositories/fxRepository.ts) - FX snapshot CRUD
+## Import et identité d'actif
 
-### Stores (State Management)
-- [src/stores/platformStore.ts](/Users/romain/Investment%20Tracker/src/stores/platformStore.ts) - Zustand store
-- [src/stores/assetStore.ts](/Users/romain/Investment%20Tracker/src/stores/assetStore.ts) - Zustand store
-- [src/stores/transactionStore.ts](/Users/romain/Investment%20Tracker/src/stores/transactionStore.ts) - Zustand store
-- [src/stores/priceStore.ts](/Users/romain/Investment%20Tracker/src/stores/priceStore.ts) - Zustand store
-- [src/stores/fxStore.ts](/Users/romain/Investment%20Tracker/src/stores/fxStore.ts) - Zustand store
+- [src/features/import/CsvImportSection.tsx](src/features/import/CsvImportSection.tsx)
+- [src/features/import/importUx.ts](src/features/import/importUx.ts)
+- [src/lib/csvImport.ts](src/lib/csvImport.ts)
+- [src/lib/csvSourceProfiles.ts](src/lib/csvSourceProfiles.ts)
+- [src/lib/assetIdentity.ts](src/lib/assetIdentity.ts)
+- [src/lib/assetResolver.ts](src/lib/assetResolver.ts)
+- [src/lib/positionSnapshots.ts](src/lib/positionSnapshots.ts)
+- [src/repositories/adminRepository.ts](src/repositories/adminRepository.ts)
 
-### Core Library
-- [src/lib/computations.ts](/Users/romain/Investment%20Tracker/src/lib/computations.ts) - Portfolio calculations
-- [src/lib/computations.test.ts](/Users/romain/Investment%20Tracker/src/lib/computations.test.ts) - Vitest tests
+## Calculs et analytics
 
-### Components
-- [src/components/PageHeading.tsx](/Users/romain/Investment%20Tracker/src/components/PageHeading.tsx) - Reusable component
+- [src/lib/holdings.ts](src/lib/holdings.ts) -> quantités canoniques
+- [src/lib/computations.ts](src/lib/computations.ts) -> synthèse branchée au dashboard
+- [src/lib/portfolioAnalytics.ts](src/lib/portfolioAnalytics.ts) -> moteur analytique plus riche, non branché
+- [src/features/dashboard/dashboardAnalytics.ts](src/features/dashboard/dashboardAnalytics.ts) -> helpers de tri et de présentation
 
-### Features (Pages)
-- [src/features/dashboard/Dashboard.tsx](/Users/romain/Investment%20Tracker/src/features/dashboard/Dashboard.tsx) - Portfolio dashboard
-- [src/features/platforms/PlatformsList.tsx](/Users/romain/Investment%20Tracker/src/features/platforms/PlatformsList.tsx) - Platform CRUD
-- [src/features/assets/AssetsList.tsx](/Users/romain/Investment%20Tracker/src/features/assets/AssetsList.tsx) - Asset CRUD
-- [src/features/transactions/TransactionsList.tsx](/Users/romain/Investment%20Tracker/src/features/transactions/TransactionsList.tsx) - Transaction CRUD
-- [src/features/prices/PricesList.tsx](/Users/romain/Investment%20Tracker/src/features/prices/PricesList.tsx) - Price snapshot CRUD
-- [src/features/fx/FxList.tsx](/Users/romain/Investment%20Tracker/src/features/fx/FxList.tsx) - FX snapshot CRUD
-- [src/features/settings/Settings.tsx](/Users/romain/Investment%20Tracker/src/features/settings/Settings.tsx) - Settings (reset, seed)
+## Persistance
 
-### Root App Files
-- [src/App.tsx](/Users/romain/Investment%20Tracker/src/App.tsx) - Main app with routing
-- [src/App.css](/Users/romain/Investment%20Tracker/src/App.css) - App styles
-- [src/main.tsx](/Users/romain/Investment%20Tracker/src/main.tsx) - React entry point
-- [src/index.css](/Users/romain/Investment%20Tracker/src/index.css) - Tailwind + base styles
+- [src/db/index.ts](src/db/index.ts) -> schéma Dexie et migrations
+- [src/types/index.ts](src/types/index.ts) -> modèle de données complet
+- [src/repositories](src/repositories) -> accès aux tables IndexedDB
+- [src/stores](src/stores) -> stores Zustand
 
-## Summary
+## Données live
 
-**Total: 42 files**
-- 6 Configuration files
-- 5 Documentation files
-- 1 Database file
-- 5 Repository files
-- 5 Store files
-- 2 Library files (computation + tests)
-- 1 Component file
-- 7 Feature pages
-- 1 Main app file
-- 3 CSS/styling files
-- 1 HTML file
-- 1 .gitignore file
+- [src/lib/liveMarketData.ts](src/lib/liveMarketData.ts)
+- [src/lib/liveDataConfig.ts](src/lib/liveDataConfig.ts)
 
-**Total Lines of Code**: ~1,900 lines (TypeScript + React)
-**Test Coverage**: 4 core functions with 19 assertions
+## Modules hérités non exposés dans le routeur principal
+
+- [src/features/assets/AssetsList.tsx](src/features/assets/AssetsList.tsx)
+- [src/features/platforms/PlatformsList.tsx](src/features/platforms/PlatformsList.tsx)
+- [src/features/accounts/AccountsList.tsx](src/features/accounts/AccountsList.tsx)
+- [src/features/transactions/TransactionsList.tsx](src/features/transactions/TransactionsList.tsx)
+- [src/features/prices/PricesList.tsx](src/features/prices/PricesList.tsx)
+- [src/features/fx/FxList.tsx](src/features/fx/FxList.tsx)
+
+Ils restent utiles pour comprendre le modèle et peuvent être réactivés plus tard, mais ils ne décrivent pas la surface produit actuelle.
+
+## Tests utiles par zone
+
+- import:
+  - [src/lib/csvImport.test.ts](src/lib/csvImport.test.ts)
+  - [src/lib/csvSourceProfiles.test.ts](src/lib/csvSourceProfiles.test.ts)
+  - [src/features/import/importUx.test.ts](src/features/import/importUx.test.ts)
+- identité d'actif:
+  - [src/lib/assetResolver.test.ts](src/lib/assetResolver.test.ts)
+- holdings / valorisation:
+  - [src/lib/holdings.test.ts](src/lib/holdings.test.ts)
+  - [src/lib/computations.test.ts](src/lib/computations.test.ts)
+  - [src/lib/portfolioAnalytics.test.ts](src/lib/portfolioAnalytics.test.ts)
+  - [src/lib/positionSnapshots.test.ts](src/lib/positionSnapshots.test.ts)
+- live:
+  - [src/lib/liveMarketData.test.ts](src/lib/liveMarketData.test.ts)
+
+## Documentation à garder alignée
+
+- [README.md](README.md)
+- [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)
+- [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [CSV_HOLDINGS_ROLLOUT_PLAN.md](CSV_HOLDINGS_ROLLOUT_PLAN.md)
+- [CENTRAL_GOVERNANCE.md](CENTRAL_GOVERNANCE.md)
+- [FINARY_BOURSE_CRYPTO_ALIGNMENT.md](FINARY_BOURSE_CRYPTO_ALIGNMENT.md)

@@ -309,4 +309,91 @@ describe('portfolioAnalytics', () => {
     expect(summary.dataQuality.missingCostBasisPositions).toBeGreaterThanOrEqual(1);
     expect(summary.dataQuality.unmatchedTransferCount).toBe(1);
   });
+
+  it('separates positions by account on the same platform before aggregating holdings', () => {
+    const transactions: AnalyticsTransaction[] = [
+      {
+        id: 'buy_cto',
+        platformId: 'p1',
+        accountId: 'account_cto',
+        assetId: 'asset_eur',
+        kind: 'BUY',
+        date: makeTimestamp(1),
+        qty: 10,
+        price: 100,
+        currency: 'EUR',
+        createdAt: makeTimestamp(1),
+      },
+      {
+        id: 'buy_pea',
+        platformId: 'p1',
+        accountId: 'account_pea',
+        assetId: 'asset_eur',
+        kind: 'BUY',
+        date: makeTimestamp(2),
+        qty: 5,
+        price: 105,
+        currency: 'EUR',
+        createdAt: makeTimestamp(2),
+      },
+    ];
+
+    const summary = analyzePortfolio({
+      assets,
+      platforms,
+      transactions,
+      priceSnapshots,
+      fxSnapshots,
+    });
+
+    expect(summary.positions).toHaveLength(2);
+    expect(summary.positions.map((position) => position.accountId).sort()).toEqual([
+      'account_cto',
+      'account_pea',
+    ]);
+    expect(summary.holdings).toHaveLength(1);
+    expect(summary.holdings[0]?.quantity).toBeCloseTo(15, 4);
+  });
+
+  it('keeps explicit transactions authoritative over synthetic snapshot movements on the same scope', () => {
+    const transactions: AnalyticsTransaction[] = [
+      {
+        id: 'snapshot_vwce',
+        platformId: 'p1',
+        accountId: 'account_cto',
+        assetId: 'asset_eur',
+        kind: 'BUY',
+        date: makeTimestamp(1),
+        qty: 20,
+        price: 100,
+        currency: 'EUR',
+        source: 'POSITION_SNAPSHOT',
+        createdAt: makeTimestamp(1),
+      },
+      {
+        id: 'buy_vwce',
+        platformId: 'p1',
+        accountId: 'account_cto',
+        assetId: 'asset_eur',
+        kind: 'BUY',
+        date: makeTimestamp(2),
+        qty: 3,
+        price: 105,
+        currency: 'EUR',
+        createdAt: makeTimestamp(2),
+      },
+    ];
+
+    const summary = analyzePortfolio({
+      assets,
+      platforms,
+      transactions,
+      priceSnapshots,
+      fxSnapshots,
+    });
+
+    expect(summary.positions).toHaveLength(1);
+    expect(summary.positions[0]?.quantity).toBeCloseTo(3, 4);
+    expect(summary.positions[0]?.costBasisEUR).toBeCloseTo(315, 2);
+  });
 });

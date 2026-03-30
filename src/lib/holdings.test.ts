@@ -68,7 +68,7 @@ describe('holdings', () => {
     expect(getTransactionQuantityDelta(transactions[1]!)).toBe(0);
   });
 
-  it('prefers POSITION_SNAPSHOT rows over legacy transactions for the same holding pair', () => {
+  it('prefers detailed transactions over POSITION_SNAPSHOT rows for the same holding pair', () => {
     const transactions: Transaction[] = [
       {
         id: 'legacy',
@@ -112,7 +112,7 @@ describe('holdings', () => {
 
     const summary = computeHoldingsSummary(transactions);
     expect(summary.positions).toHaveLength(1);
-    expect(summary.positions[0]?.qty).toBe(6);
-    expect(summary.positions[0]?.transactions).toHaveLength(2);
+    expect(summary.positions[0]?.qty).toBe(100);
+    expect(summary.positions[0]?.transactions).toHaveLength(1);
   });
 });

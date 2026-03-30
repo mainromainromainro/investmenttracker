@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { Asset } from '../types';
+import { buildManualAssetIdentity } from '../lib/assetIdentity';
 
 export const assetRepository = {
   async getAll() {
@@ -11,8 +12,22 @@ export const assetRepository = {
   },
 
   async create(asset: Omit<Asset, 'createdAt'>) {
+    const identity = buildManualAssetIdentity({
+      symbol: asset.symbol,
+      currency: asset.currency,
+      type: asset.type,
+      isin: asset.isin,
+      brokerSymbol: asset.brokerSymbol,
+      exchange: asset.exchange,
+    });
     const newAsset: Asset = {
       ...asset,
+      canonicalAssetKey: asset.canonicalAssetKey ?? identity.canonicalAssetKey,
+      identityStrategy: asset.identityStrategy ?? identity.identityStrategy,
+      identityStatus: asset.identityStatus ?? identity.identityStatus,
+      isin: asset.isin ?? identity.isin,
+      brokerSymbol: asset.brokerSymbol ?? identity.brokerSymbol,
+      exchange: asset.exchange ?? identity.exchange,
       createdAt: Date.now(),
     };
     await db.assets.add(newAsset);

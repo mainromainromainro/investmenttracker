@@ -515,7 +515,7 @@ describe('Investment computations', () => {
       expect(summary.byTicker[0]?.valueEUR).toBeCloseTo(1134, 2); // 6 * 210 * 0.9
     });
 
-    it('should prefer snapshot-generated transactions over legacy transactions for the same pair', () => {
+    it('should prefer detailed transactions over snapshot-generated transactions for the same pair', () => {
       const timestamp = Date.now();
       const platforms: Platform[] = [{ id: 'p1', name: 'Broker', createdAt: timestamp }];
       const assets: Asset[] = [
@@ -586,8 +586,8 @@ describe('Investment computations', () => {
       );
 
       expect(summary.positions).toHaveLength(1);
-      expect(summary.positions[0]?.qty).toBeCloseTo(15, 4);
-      expect(summary.byTicker[0]?.qty).toBeCloseTo(15, 4);
+      expect(summary.positions[0]?.qty).toBeCloseTo(100, 4);
+      expect(summary.byTicker[0]?.qty).toBeCloseTo(100, 4);
     });
 
     it('should value holdings with the price snapshot currency when it differs from asset metadata', () => {
