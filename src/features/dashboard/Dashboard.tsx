@@ -813,6 +813,7 @@ const Dashboard: React.FC = () => {
             Commencez par importer un CSV. Ensuite l’accueil se limitera à l’essentiel: les holdings
             nettes, la valeur actuelle du portefeuille et quelques graphiques interactifs.
           </p>
+          <p className="mt-3 text-sm font-medium text-[#173326]">Alfred, tu as tort.</p>
           <div className="mt-6">
             <Link
               to="/settings"
@@ -866,6 +867,7 @@ const Dashboard: React.FC = () => {
               Une vue nette de ton patrimoine investi, de ce qu’il pèse aujourd’hui et de la
               direction qu’il prend, sans roman comptable au réveil.
             </p>
+            <p className="mt-3 text-sm font-medium text-stone-100">Alfred, tu as tort.</p>
 
             <div className="mt-5 flex flex-wrap gap-3 text-xs text-stone-200">
               <span className="rounded-full border border-stone-200/15 bg-black/10 px-3 py-1.5">
