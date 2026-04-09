@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import './App.css';
 import Dashboard from './features/dashboard/Dashboard';
 import ImportPage from './features/import/ImportPage';
@@ -63,6 +64,7 @@ function App() {
           </Routes>
         </main>
       </div>
+      <Analytics />
     </BrowserRouter>
   );
 }
